@@ -1,5 +1,6 @@
 import os
 import glob
+import argparse
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -627,11 +628,16 @@ def plot_liberal_stuff_done_heatmaps(df, output_folder):
     generate_heatmap("Last edited", "Task Completion Heatmap", "liberal_heatmap_completion.png")
 
 
-# === USAGE EXAMPLE ===
-folder_name = "04_Jun_2025"  # Change this to your actual folder path
-csv_file = find_all_csv(folder_name)
+def main(date_folder):
+    """Run full analysis for the given dated folder inside ``data``."""
+    base_data = os.path.join(os.path.dirname(__file__), "..", "data")
+    folder_path = os.path.join(base_data, date_folder)
+    csv_file = find_all_csv(folder_path)
 
-if csv_file:
+    if not csv_file:
+        print(f"No CSV found for {date_folder}")
+        return
+
     df, analysis = analyze_tasks(csv_file)
     output_folder = os.path.dirname(csv_file)
 
@@ -650,3 +656,11 @@ if csv_file:
     plot_working_session_heatmaps(df, output_folder)
     plot_abbvie_done_heatmaps(df, output_folder)
     plot_liberal_stuff_done_heatmaps(df, output_folder)
+
+
+if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Run task analytics on a dated export")
+    parser.add_argument("date", help="Folder name inside 'data' containing the CSV export")
+    args = parser.parse_args()
+
+    main(args.date)
