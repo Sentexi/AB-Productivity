@@ -14,3 +14,4 @@ seaborn==0.13.2
 six==1.17.0
 tzdata==2025.2
 Flask==3.0.3
+plotly==5.22.0
