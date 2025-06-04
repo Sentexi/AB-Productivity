@@ -5,6 +5,7 @@ import sys
 from datetime import datetime
 
 from flask import Flask, render_template
+import plotly.offline as pyo
 
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, '..', 'src'))
@@ -21,6 +22,10 @@ from report import (
     plot_working_session_heatmaps,
     plot_abbvie_done_heatmaps,
     plot_liberal_stuff_done_heatmaps,
+    interactive_ttc_histogram,
+    interactive_monthly_task_flow,
+    interactive_workspace_piecharts,
+    interactive_waterfall,
 )
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -96,6 +101,55 @@ def analysis():
     else:
         table_html = analysis_global.to_html(classes='data', index=False)
     return render_template('analysis.html', table=table_html)
+
+
+# -------- Interactive routes --------
+
+@app.route('/interactive')
+def interactive_index():
+    if df_global is None:
+        _load_data()
+    return render_template('interactive/index.html')
+
+
+def _fig_to_div(fig):
+    return pyo.plot(fig, output_type='div', include_plotlyjs='cdn')
+
+
+@app.route('/interactive/ttc')
+def interactive_ttc():
+    if df_global is None:
+        _load_data()
+    fig = interactive_ttc_histogram(df_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/ttc.html', plot_div=div)
+
+
+@app.route('/interactive/taskflow')
+def interactive_taskflow():
+    if analysis_global is None or df_global is None:
+        _load_data()
+    fig = interactive_monthly_task_flow(analysis_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/taskflow.html', plot_div=div)
+
+
+@app.route('/interactive/workspace')
+def interactive_workspace():
+    if df_global is None:
+        _load_data()
+    fig = interactive_workspace_piecharts(df_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/workspace.html', plot_div=div)
+
+
+@app.route('/interactive/waterfall')
+def interactive_waterfall_route():
+    if df_global is None:
+        _load_data()
+    fig = interactive_waterfall(df_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/waterfall.html', plot_div=div)
 
 
 if __name__ == '__main__':

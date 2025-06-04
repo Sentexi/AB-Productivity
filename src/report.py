@@ -4,6 +4,8 @@ import argparse
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+import plotly.graph_objects as go
+import plotly.express as px
 
 def find_all_csv(folder_path):
     # Find any file in the folder that ends with _all.csv
@@ -626,6 +628,180 @@ def plot_liberal_stuff_done_heatmaps(df, output_folder):
 
     # Completion heatmap
     generate_heatmap("Last edited", "Task Completion Heatmap", "liberal_heatmap_completion.png")
+
+
+# =====================
+# Interactive Plotly Versions
+# =====================
+
+def interactive_ttc_histogram(df):
+    """Return a Plotly figure of the TTC histogram with a year selector."""
+    done_tasks = df[df["Status"].str.lower() == "done"].copy()
+    done_tasks["Created time"] = pd.to_datetime(done_tasks["Created time"], errors="coerce")
+    done_tasks["Last edited"] = pd.to_datetime(done_tasks["Last edited"], errors="coerce")
+    done_tasks = done_tasks.dropna(subset=["Created time", "Last edited"])
+
+    done_tasks["TTC"] = (done_tasks["Last edited"] - done_tasks["Created time"]).dt.days
+    done_tasks = done_tasks[done_tasks["TTC"] >= 0]
+    done_tasks["year"] = done_tasks["Created time"].dt.year
+
+    cutoff = int(done_tasks["TTC"].quantile(0.95))
+
+    fig = go.Figure()
+    fig.add_trace(go.Histogram(x=done_tasks["TTC"].clip(upper=cutoff), nbinsx=cutoff + 1, name="All"))
+
+    years = sorted(done_tasks["year"].dropna().unique())
+    for year in years:
+        year_df = done_tasks[done_tasks["year"] == year]
+        fig.add_trace(go.Histogram(x=year_df["TTC"].clip(upper=cutoff), nbinsx=cutoff + 1,
+                                   name=str(int(year)), visible=False))
+
+    buttons = []
+    n = len(fig.data)
+    buttons.append(dict(label="All", method="update",
+                        args=[{"visible": [True] + [False] * (n - 1)},
+                              {"title": "Time to Completion - All"}]))
+    for i, year in enumerate(years):
+        vis = [False] * n
+        vis[i + 1] = True
+        buttons.append(dict(label=str(int(year)), method="update",
+                            args=[{"visible": vis}, {"title": f"Time to Completion - {int(year)}"}]))
+
+    fig.update_layout(title="Time to Completion - All",
+                      xaxis_title="Days",
+                      yaxis_title="Count",
+                      updatemenus=[dict(buttons=buttons, direction="down")])
+    return fig
+
+
+def interactive_monthly_task_flow(analysis_df):
+    """Return a Plotly figure with monthly task flow and year selector."""
+    df = analysis_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    df["month"] = df["date"].dt.to_period("M").astype(str)
+
+    fig = go.Figure()
+    monthly_all = df.groupby("month")[["tasks created", "tasks done"]].sum().reset_index()
+    fig.add_trace(go.Bar(x=monthly_all["month"], y=-monthly_all["tasks created"],
+                         name="Tasks Created", marker_color="red"))
+    fig.add_trace(go.Bar(x=monthly_all["month"], y=monthly_all["tasks done"],
+                         name="Tasks Done", marker_color="green"))
+
+    years = sorted(df["year"].dropna().unique())
+    for year in years:
+        monthly_year = df[df["year"] == year].groupby("month")[["tasks created", "tasks done"]].sum().reset_index()
+        fig.add_trace(go.Bar(x=monthly_year["month"], y=-monthly_year["tasks created"],
+                             name="Tasks Created", marker_color="red", visible=False))
+        fig.add_trace(go.Bar(x=monthly_year["month"], y=monthly_year["tasks done"],
+                             name="Tasks Done", marker_color="green", visible=False))
+
+    buttons = []
+    n_base = 2  # two traces per view
+    total_traces = len(fig.data)
+    buttons.append(dict(label="All", method="update",
+                        args=[{"visible": [True, True] + [False] * (total_traces - n_base)},
+                              {"title": "Monthly Task Flow - All"}]))
+
+    for i, year in enumerate(years):
+        vis = [False] * total_traces
+        start = n_base + i * n_base
+        vis[start:start + n_base] = [True, True]
+        buttons.append(dict(label=str(int(year)), method="update",
+                            args=[{"visible": vis}, {"title": f"Monthly Task Flow - {int(year)}"}]))
+
+    fig.update_layout(title="Monthly Task Flow - All",
+                      xaxis_title="Month",
+                      yaxis_title="Number of Tasks",
+                      barmode="relative",
+                      updatemenus=[dict(buttons=buttons, direction="down")])
+    return fig
+
+
+def interactive_workspace_piecharts(df):
+    """Return a Plotly pie chart with year selector showing workspace distribution."""
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    data["year"] = data["Created time"].dt.year
+
+    fig = go.Figure()
+    total = data.groupby("Workspace").size().reset_index(name="count")
+    fig.add_trace(go.Pie(labels=total["Workspace"], values=total["count"], name="All"))
+
+    years = sorted(data["year"].dropna().unique())
+    for year in years:
+        year_data = data[data["year"] == year]
+        year_grouped = year_data.groupby("Workspace").size().reset_index(name="count")
+        fig.add_trace(go.Pie(labels=year_grouped["Workspace"], values=year_grouped["count"],
+                             name=str(int(year)), visible=False))
+
+    buttons = []
+    n = len(fig.data)
+    buttons.append(dict(label="All", method="update",
+                        args=[{"visible": [True] + [False] * (n - 1)},
+                              {"title": "Workspace Distribution - All"}]))
+    for i, year in enumerate(years):
+        vis = [False] * n
+        vis[i + 1] = True
+        buttons.append(dict(label=str(int(year)), method="update",
+                            args=[{"visible": vis}, {"title": f"Workspace Distribution - {int(year)}"}]))
+
+    fig.update_layout(title="Workspace Distribution - All",
+                      updatemenus=[dict(buttons=buttons, direction="down")])
+    return fig
+
+
+def interactive_waterfall(df):
+    """Return a Plotly waterfall showing cumulative tasks with year selector."""
+    df = df.copy()
+    df["Created time"] = pd.to_datetime(df["Created time"], errors="coerce")
+    df["Last edited"] = pd.to_datetime(df["Last edited"], errors="coerce")
+    df["Created date"] = df["Created time"].dt.date
+    df["Edited date"] = df["Last edited"].dt.date
+    df["year"] = df["Created time"].dt.year
+
+    def build_analysis(sub_df):
+        created = sub_df.groupby("Created date").size().rename("created")
+        closed = sub_df[sub_df["Status"].str.lower().isin(["done", "abandoned"])]
+        closed = closed.groupby("Edited date").size().rename("closed")
+        analysis = pd.concat([created, closed], axis=1).fillna(0).astype(int)
+        analysis.index.name = "date"
+        analysis = analysis.reset_index().sort_values("date")
+        analysis["net"] = analysis["created"] - analysis["closed"]
+        analysis["cumulative"] = analysis["net"].cumsum()
+        return analysis
+
+    fig = go.Figure()
+    total = build_analysis(df)
+    fig.add_trace(go.Bar(x=total["date"], y=total["net"], name="Net Change"))
+    fig.add_trace(go.Scatter(x=total["date"], y=total["cumulative"], mode="lines", name="Cumulative"))
+
+    years = sorted(df["year"].dropna().unique())
+    for year in years:
+        year_df = df[df["year"] == year]
+        analysis = build_analysis(year_df)
+        fig.add_trace(go.Bar(x=analysis["date"], y=analysis["net"], name="Net Change",
+                             visible=False))
+        fig.add_trace(go.Scatter(x=analysis["date"], y=analysis["cumulative"], mode="lines",
+                                 name="Cumulative", visible=False))
+
+    buttons = []
+    n_base = 2
+    total_traces = len(fig.data)
+    buttons.append(dict(label="All", method="update",
+                        args=[{"visible": [True, True] + [False] * (total_traces - n_base)},
+                              {"title": "Task Waterfall - All"}]))
+    for i, year in enumerate(years):
+        vis = [False] * total_traces
+        start = n_base + i * n_base
+        vis[start:start + n_base] = [True, True]
+        buttons.append(dict(label=str(int(year)), method="update",
+                            args=[{"visible": vis}, {"title": f"Task Waterfall - {int(year)}"}]))
+
+    fig.update_layout(title="Task Waterfall - All",
+                      yaxis_title="Number of Tasks",
+                      updatemenus=[dict(buttons=buttons, direction="down")])
+    return fig
 
 
 def main(date_folder):

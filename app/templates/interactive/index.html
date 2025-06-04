@@ -1,0 +1,11 @@
+{% extends 'base.html' %}
+{% block title %}Interactive{% endblock %}
+{% block content %}
+<h1>Interactive Graphs</h1>
+<ul>
+  <li><a href="{{ url_for('interactive_ttc') }}">Time to Completion Histogram</a></li>
+  <li><a href="{{ url_for('interactive_taskflow') }}">Monthly Task Flow</a></li>
+  <li><a href="{{ url_for('interactive_workspace') }}">Workspace Distribution</a></li>
+  <li><a href="{{ url_for('interactive_waterfall_route') }}">Task Waterfall</a></li>
+</ul>
+{% endblock %}
