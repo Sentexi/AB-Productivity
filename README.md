@@ -6,10 +6,22 @@ Python utilities for analysing task throughput and efficiency.
 
 Place your CSV exports inside a dated folder under `data/`, e.g. `data/04_Jun_2025/my_export_all.csv`.
 
-Run the report by providing the date folder as an argument:
+To generate static graphs via the command line:
 
 ```bash
 python src/report.py 04_Jun_2025
 ```
 
-All graphs will be saved in the same folder as the CSV file.
+### Web Application
+
+A simple Flask web app is available for interactive exploration. It automatically loads the most recent dated folder in `data/` and builds an SQLite database along with all graphs.
+
+Run it with:
+
+```bash
+python app/app.py
+```
+
+Open `http://localhost:5000` in your browser to view the dashboard.
+
+All graphs are saved under `app/static/img`.
