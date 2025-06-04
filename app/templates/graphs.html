@@ -1,0 +1,12 @@
+{% extends 'base.html' %}
+{% block title %}Graphs{% endblock %}
+{% block content %}
+<h1>Graphs</h1>
+{% for img in graphs %}
+  <div class="graph">
+    <img src="{{ url_for('static', filename='img/' + img) }}" alt="{{ img }}" style="max-width:100%; height:auto;">
+  </div>
+{% else %}
+  <p>No graphs generated.</p>
+{% endfor %}
+{% endblock %}
