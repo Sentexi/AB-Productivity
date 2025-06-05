@@ -508,7 +508,13 @@ def plot_working_session_heatmaps(df, output_folder):
         hour_bins = list(range(24))
 
         def plot_heat(data, year_label, filename):
+            if data.empty:
+                print(f"No data for {year_label} heatmap '{filename}', skipping")
+                return
             pivot = data.groupby(["weekday", "hour"]).size().unstack(fill_value=0).reindex(weekday_order)
+            if pivot.empty or pivot.sum().sum() == 0:
+                print(f"No data for {year_label} heatmap '{filename}', skipping")
+                return
             percent = pivot.div(pivot.sum().sum()) * 100
             plt.figure(figsize=(12, 5))
             sns.heatmap(percent, cmap="YlGnBu", annot=False, cbar_kws={"label": "% of Tasks"})
@@ -561,9 +567,15 @@ def plot_abbvie_done_heatmaps(df, output_folder):
         df_time["hour"] = df_time[time_col].dt.hour
 
         # Pivot to weekday × hour and normalize
+        if df_time.empty:
+            print(f"No data for heatmap '{filename}', skipping")
+            return
         pivot = df_time.groupby(["weekday", "hour"]).size().unstack(fill_value=0)
         weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         pivot = pivot.reindex(weekday_order)
+        if pivot.empty or pivot.sum().sum() == 0:
+            print(f"No data for heatmap '{filename}', skipping")
+            return
         percent = pivot.div(pivot.sum().sum()) * 100
 
         # Plot
@@ -611,9 +623,15 @@ def plot_liberal_stuff_done_heatmaps(df, output_folder):
         df_time["hour"] = df_time[time_col].dt.hour
 
         # Pivot to weekday × hour and normalize
+        if df_time.empty:
+            print(f"No data for heatmap '{filename}', skipping")
+            return
         pivot = df_time.groupby(["weekday", "hour"]).size().unstack(fill_value=0)
         weekday_order = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
         pivot = pivot.reindex(weekday_order)
+        if pivot.empty or pivot.sum().sum() == 0:
+            print(f"No data for heatmap '{filename}', skipping")
+            return
         percent = pivot.div(pivot.sum().sum()) * 100
 
         # Plot
