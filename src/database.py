@@ -5,6 +5,25 @@ import pandas as pd
 from .config import NOTION_TOKEN, NOTION_DATABASE_ID
 from .client import request
 
+# Cache for resolved page titles to minimise API calls
+_PAGE_TITLE_CACHE: Dict[str, str | None] = {}
+
+
+def get_page_title(page_id: str, token: str) -> str | None:
+    """Return the title of a page, caching results to avoid extra API calls."""
+    if page_id in _PAGE_TITLE_CACHE:
+        return _PAGE_TITLE_CACHE[page_id]
+
+    data = request("GET", f"/pages/{page_id}", token)
+    title: str | None = None
+    for prop in data.get("properties", {}).values():
+        if prop.get("type") == "title":
+            title = "".join(part.get("plain_text", "") for part in prop.get("title", []))
+            break
+
+    _PAGE_TITLE_CACHE[page_id] = title
+    return title
+
 
 def get_schema(db_id: str | None = None, token: str | None = None) -> Dict[str, Any]:
     db_id = db_id or NOTION_DATABASE_ID
@@ -33,20 +52,56 @@ def query_database(
     return results
 
 
-def _extract_value(prop: Dict[str, Any]) -> Any:
+def _extract_value(prop: Dict[str, Any], token: str | None = None) -> Any:
     """Return a simplified Python value for a Notion property."""
     t = prop.get("type")
     value = prop.get(t)
+
     if t in ("title", "rich_text"):
         return "".join(part.get("plain_text", "") for part in value)
+
     if t in ("select", "status"):
         return value.get("name") if value else None
+
     if t == "multi_select":
         return ";".join(opt.get("name", "") for opt in value)
+
     if t == "people":
         return ";".join(p.get("name", "") for p in value)
+
     if t == "date":
         return value.get("start") if value else None
+
+    if t == "rollup":
+        rtype = value.get("type")
+        if rtype == "array":
+            results: List[str] = []
+            for item in value.get("array", []):
+                itype = item.get("type")
+                if itype in ("title", "rich_text"):
+                    text_parts = item.get(itype, [])
+                    results.append("".join(part.get("plain_text", "") for part in text_parts))
+                elif itype == "relation":
+                    page_id = item.get("relation", {}).get("id")
+                    if page_id:
+                        if token:
+                            title = get_page_title(page_id, token)
+                            results.append(title or page_id)
+                        else:
+                            results.append(page_id)
+                else:
+                    data = item.get(itype)
+                    if isinstance(data, dict):
+                        results.append(str(data.get("id") or data.get("name") or data))
+                    else:
+                        if data is not None:
+                            results.append(str(data))
+            return ";".join(r for r in results if r)
+        if rtype == "number":
+            return value.get("number")
+        if rtype == "date":
+            return value.get("date", {}).get("start")
+
     return value
 
 
@@ -56,6 +111,7 @@ def query_database_dataframe(
     **payload: Any,
 ) -> pd.DataFrame:
     """Return the entire Notion database as a pandas ``DataFrame``."""
+    token = token or NOTION_TOKEN
     pages = query_database(db_id=db_id, token=token, **payload)
     rows: List[Dict[str, Any]] = []
     for page in pages:
@@ -65,7 +121,7 @@ def query_database_dataframe(
             "Last edited": page.get("last_edited_time"),
         }
         for name, prop in page.get("properties", {}).items():
-            row[name] = _extract_value(prop)
+            row[name] = _extract_value(prop, token)
         rows.append(row)
     return pd.DataFrame(rows)
 
@@ -73,7 +129,7 @@ def query_database_dataframe(
 def export_database_csv(folder_path: str, filename: str = "notion_all.csv") -> str:
     """Fetch the database and save as a CSV in ``folder_path``."""
     os.makedirs(folder_path, exist_ok=True)
-    df = query_database_dataframe()
+    df = query_database_dataframe(token=NOTION_TOKEN)
     csv_path = os.path.join(folder_path, filename)
     df.to_csv(csv_path, index=False)
     return csv_path
