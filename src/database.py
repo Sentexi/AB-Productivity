@@ -72,6 +72,16 @@ def _extract_value(prop: Dict[str, Any], token: str | None = None) -> Any:
     if t == "date":
         return value.get("start") if value else None
 
+    if t == "relation":
+        ids = [r.get("id") for r in value] if isinstance(value, list) else []
+        if token:
+            names = []
+            for page_id in ids:
+                title = get_page_title(page_id, token)
+                names.append(title or page_id)
+            return ";".join(n for n in names if n)
+        return ";".join(pid for pid in ids if pid)
+
     if t == "rollup":
         rtype = value.get("type")
         if rtype == "array":
