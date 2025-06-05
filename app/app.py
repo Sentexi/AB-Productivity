@@ -10,6 +10,7 @@ import plotly.offline as pyo
 BASE_DIR = os.path.dirname(__file__)
 sys.path.append(os.path.join(BASE_DIR, '..', 'src'))
 
+from database import export_database_csv
 from report import (
     analyze_tasks,
     plot_time_to_completion_histogram,
@@ -37,6 +38,15 @@ df_global = None
 analysis_global = None
 
 
+def _ensure_today_folder() -> None:
+    """Fetch data from Notion if today's folder is missing."""
+    today = datetime.now().strftime('%d_%b_%Y')
+    folder_path = os.path.join(DATA_DIR, today)
+    csv_files = glob.glob(os.path.join(folder_path, '*_all.csv'))
+    if not csv_files:
+        export_database_csv(folder_path)
+
+
 def _latest_csv():
     folders = [f for f in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, f))]
     if not folders:
@@ -58,6 +68,7 @@ def _latest_csv():
 
 def _load_data():
     global df_global, analysis_global
+    _ensure_today_folder()
     csv_path, folder_path = _latest_csv()
     df, analysis = analyze_tasks(csv_path)
 
