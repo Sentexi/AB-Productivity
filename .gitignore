@@ -16,3 +16,7 @@ __pycache__/
 # ---- Date-stamped data folders (22_May_2025, 03_Jun_2024, …) ----
 # Two digits, underscore, three-letter month, underscore, four digits, trailing slash
 **/[0-3][0-9]_[A-Z][a-z][a-z]_[0-9][0-9][0-9][0-9]/
+
+# Secrets
+secret.txt
+db.txt
