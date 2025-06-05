@@ -21,6 +21,10 @@ def analyze_tasks(csv_path):
     # Load CSV into DataFrame
     df = pd.read_csv(csv_path)
 
+    # Clean column names to avoid duplicates when exporting to SQLite
+    df.columns = df.columns.str.strip()
+    df = df.loc[:, ~df.columns.str.lower().duplicated()]
+
     # Convert relevant columns to datetime
     df["Created time"] = pd.to_datetime(df["Created time"], errors="coerce")
     df["Last edited"] = pd.to_datetime(df["Last edited"], errors="coerce")
