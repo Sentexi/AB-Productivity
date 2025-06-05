@@ -14,7 +14,10 @@ python src/report.py 04_Jun_2025
 
 ### Web Application
 
-A simple Flask web app is available for interactive exploration. It automatically loads the most recent dated folder in `data/` and builds an SQLite database along with all graphs.
+A simple Flask web app is available for interactive exploration. On startup it will
+fetch the latest data from Notion if a folder for the current day does not
+already exist. The app then loads the most recent dated folder in `data/` and
+builds an SQLite database along with all graphs.
 
 Run it with:
 
