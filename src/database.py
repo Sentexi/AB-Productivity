@@ -1,12 +1,19 @@
 from typing import Any, Dict, List
 import os
+import json
+from pathlib import Path
 import pandas as pd
 
 from .config import NOTION_TOKEN, NOTION_DATABASE_ID
 from .client import request
 
 # Cache for resolved page titles to minimise API calls
-_PAGE_TITLE_CACHE: Dict[str, str | None] = {}
+CACHE_PATH = Path(__file__).resolve().parent.parent / "data" / "workspace_cache.json"
+try:
+    with CACHE_PATH.open("r", encoding="utf-8") as f:
+        _PAGE_TITLE_CACHE: Dict[str, str | None] = json.load(f)
+except Exception:
+    _PAGE_TITLE_CACHE: Dict[str, str | None] = {}
 
 
 def get_page_title(page_id: str, token: str) -> str | None:
@@ -22,6 +29,11 @@ def get_page_title(page_id: str, token: str) -> str | None:
             break
 
     _PAGE_TITLE_CACHE[page_id] = title
+    try:
+        with CACHE_PATH.open("w", encoding="utf-8") as f:
+            json.dump(_PAGE_TITLE_CACHE, f)
+    except Exception:
+        pass
     return title
 
 
@@ -71,6 +83,16 @@ def _extract_value(prop: Dict[str, Any], token: str | None = None) -> Any:
 
     if t == "date":
         return value.get("start") if value else None
+
+    if t == "relation":
+        ids = [r.get("id") for r in value] if isinstance(value, list) else []
+        if token:
+            names = []
+            for page_id in ids:
+                title = get_page_title(page_id, token)
+                names.append(title or page_id)
+            return ";".join(n for n in names if n)
+        return ";".join(pid for pid in ids if pid)
 
     if t == "rollup":
         rtype = value.get("type")
