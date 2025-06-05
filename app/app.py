@@ -8,10 +8,12 @@ from flask import Flask, render_template
 import plotly.offline as pyo
 
 BASE_DIR = os.path.dirname(__file__)
-sys.path.append(os.path.join(BASE_DIR, '..', 'src'))
+ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
+if ROOT_DIR not in sys.path:
+    sys.path.append(ROOT_DIR)
 
-from database import export_database_csv
-from report import (
+from src.database import export_database_csv
+from src.report import (
     analyze_tasks,
     plot_time_to_completion_histogram,
     plot_monthly_task_flow,
