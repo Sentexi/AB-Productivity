@@ -740,6 +740,102 @@ def interactive_monthly_task_flow(analysis_df):
     return fig
 
 
+def interactive_weekly_task_flow(analysis_df):
+    """Return a Plotly figure with weekly task flow and year selector."""
+    df = analysis_df.copy()
+    df["date"] = pd.to_datetime(df["date"])
+    df["year"] = df["date"].dt.year
+    df["week_number"] = df["date"].dt.isocalendar().week
+
+    fig = go.Figure()
+    weekly_all = (
+        df.groupby("week_number")[["tasks created", "tasks done"]]
+        .sum()
+        .reset_index()
+    )
+    fig.add_trace(
+        go.Bar(
+            x=weekly_all["week_number"],
+            y=-weekly_all["tasks created"],
+            name="Tasks Created",
+            marker_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=weekly_all["week_number"],
+            y=weekly_all["tasks done"],
+            name="Tasks Done",
+            marker_color="green",
+        )
+    )
+
+    years = sorted(df["year"].dropna().unique())
+    for year in years:
+        weekly_year = (
+            df[df["year"] == year]
+            .groupby("week_number")[["tasks created", "tasks done"]]
+            .sum()
+            .reset_index()
+        )
+        fig.add_trace(
+            go.Bar(
+                x=weekly_year["week_number"],
+                y=-weekly_year["tasks created"],
+                name="Tasks Created",
+                marker_color="red",
+                visible=False,
+            )
+        )
+        fig.add_trace(
+            go.Bar(
+                x=weekly_year["week_number"],
+                y=weekly_year["tasks done"],
+                name="Tasks Done",
+                marker_color="green",
+                visible=False,
+            )
+        )
+
+    buttons = []
+    n_base = 2
+    total_traces = len(fig.data)
+    buttons.append(
+        dict(
+            label="All",
+            method="update",
+            args=[
+                {"visible": [True, True] + [False] * (total_traces - n_base)},
+                {"title": "Weekly Task Flow - All"},
+            ],
+        )
+    )
+
+    for i, year in enumerate(years):
+        vis = [False] * total_traces
+        start = n_base + i * n_base
+        vis[start : start + n_base] = [True, True]
+        buttons.append(
+            dict(
+                label=str(int(year)),
+                method="update",
+                args=[
+                    {"visible": vis},
+                    {"title": f"Weekly Task Flow - {int(year)}"},
+                ],
+            )
+        )
+
+    fig.update_layout(
+        title="Weekly Task Flow - All",
+        xaxis_title="Week Number",
+        yaxis_title="Number of Tasks",
+        barmode="relative",
+        updatemenus=[dict(buttons=buttons, direction="down")],
+    )
+    return fig
+
+
 def interactive_workspace_piecharts(df):
     """Return a Plotly pie chart with year selector showing workspace distribution."""
     data = df.copy()
