@@ -27,6 +27,7 @@ from src.report import (
     plot_liberal_stuff_done_heatmaps,
     interactive_ttc_histogram,
     interactive_monthly_task_flow,
+    interactive_weekly_task_flow,
     interactive_workspace_piecharts,
     interactive_waterfall,
 )
@@ -145,6 +146,15 @@ def interactive_taskflow():
     fig = interactive_monthly_task_flow(analysis_global)
     div = _fig_to_div(fig)
     return render_template('interactive/taskflow.html', plot_div=div)
+
+
+@app.route('/interactive/taskflow_weekly')
+def interactive_taskflow_weekly():
+    if analysis_global is None or df_global is None:
+        _load_data()
+    fig = interactive_weekly_task_flow(analysis_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/taskflow_weekly.html', plot_div=div)
 
 
 @app.route('/interactive/workspace')

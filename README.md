@@ -28,3 +28,4 @@ python app/app.py
 Open `http://localhost:5000` in your browser to view the dashboard.
 
 All graphs are saved under `app/static/img`.
+The interactive section now includes a weekly task flow view with a year selector.
