@@ -706,6 +706,40 @@ def interactive_ttc_histogram(df):
     return fig
 
 
+def prepare_ttc_statistics(df, window_days=30):
+    """Return median TTC stats overall and for the most recent period."""
+
+    done_tasks = df[df["Status"].str.lower() == "done"].copy()
+    done_tasks["Created time"] = pd.to_datetime(done_tasks["Created time"], errors="coerce")
+    done_tasks["Last edited"] = pd.to_datetime(done_tasks["Last edited"], errors="coerce")
+    done_tasks = done_tasks.dropna(subset=["Created time", "Last edited"])
+
+    if done_tasks.empty:
+        return {"overall_median": None, "recent_median": None, "recent_count": 0}, done_tasks
+
+    done_tasks["TTC"] = (done_tasks["Last edited"] - done_tasks["Created time"]).dt.days
+    done_tasks = done_tasks[done_tasks["TTC"] >= 0]
+
+    if done_tasks.empty:
+        return {"overall_median": None, "recent_median": None, "recent_count": 0}, done_tasks
+
+    overall_median = float(done_tasks["TTC"].median())
+
+    latest_completion = done_tasks["Last edited"].max()
+    cutoff = latest_completion - pd.Timedelta(days=window_days)
+    recent = done_tasks[done_tasks["Last edited"] >= cutoff]
+
+    recent_median = float(recent["TTC"].median()) if not recent.empty else None
+
+    stats = {
+        "overall_median": overall_median,
+        "recent_median": recent_median,
+        "recent_count": int(len(recent)),
+    }
+
+    return stats, done_tasks
+
+
 def interactive_monthly_task_flow(analysis_df):
     """Return a Plotly figure with monthly task flow and year selector."""
     df = analysis_df.copy()
@@ -750,8 +784,8 @@ def interactive_monthly_task_flow(analysis_df):
     return fig
 
 
-def interactive_weekly_time_minutes(df):
-    """Return a Plotly figure summing estimated/actual minutes per week."""
+def prepare_weekly_time_minutes(df):
+    """Return a dataframe with weekly estimated vs actual minutes."""
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
@@ -799,6 +833,14 @@ def interactive_weekly_time_minutes(df):
     weekly = weekly.reset_index()
     weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
     weekly["year"] = weekly["week_start"].dt.year
+
+    return weekly
+
+
+def interactive_weekly_time_minutes(df):
+    """Return a Plotly figure summing estimated/actual minutes per week."""
+
+    weekly = prepare_weekly_time_minutes(df)
 
     fig = go.Figure()
     fig.add_trace(
@@ -885,8 +927,8 @@ def interactive_weekly_time_minutes(df):
     return fig
 
 
-def interactive_daily_time_backlog(df):
-    """Return a Plotly figure showing daily backlog changes and cumulative minutes."""
+def prepare_daily_time_backlog(df):
+    """Return a dataframe with daily backlog minutes and cumulative totals."""
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
@@ -929,6 +971,14 @@ def interactive_daily_time_backlog(df):
     daily["net_change"] = daily["incoming_minutes"] - daily["completed_minutes"]
     daily["cumulative_backlog"] = daily["net_change"].cumsum()
 
+    return daily
+
+
+def interactive_daily_time_backlog(df):
+    """Return a Plotly figure showing daily backlog changes and cumulative minutes."""
+
+    daily = prepare_daily_time_backlog(df)
+
     colors = ["red" if val > 0 else "green" for val in daily["net_change"]]
 
     fig = go.Figure()
@@ -961,8 +1011,8 @@ def interactive_daily_time_backlog(df):
     return fig
 
 
-def interactive_weekly_task_flow_counts(df):
-    """Return a Plotly figure with weekly task counts and year selector."""
+def prepare_weekly_task_flow_counts(df):
+    """Return a dataframe with weekly created vs done task counts."""
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data.get("Created time"), errors="coerce")
@@ -985,6 +1035,14 @@ def interactive_weekly_task_flow_counts(df):
     weekly = weekly.reset_index()
     weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
     weekly["year"] = weekly["week_start"].dt.year
+
+    return weekly
+
+
+def interactive_weekly_task_flow_counts(df):
+    """Return a Plotly figure with weekly task counts and year selector."""
+
+    weekly = prepare_weekly_task_flow_counts(df)
 
     fig = go.Figure()
     fig.add_trace(
@@ -1071,36 +1129,73 @@ def interactive_weekly_task_flow_counts(df):
     return fig
 
 
-def interactive_workspace_piecharts(df):
-    """Return a Plotly pie chart with year selector showing workspace distribution."""
+def prepare_workspace_distribution(df):
+    """Return a dataframe summarising workspace counts overall and per year."""
+
     data = df.copy()
     data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
     data["year"] = data["Created time"].dt.year
 
-    fig = go.Figure()
     total = data.groupby("Workspace").size().reset_index(name="count")
+
+    yearly = (
+        data.dropna(subset=["year"])
+        .groupby(["year", "Workspace"]).size().reset_index(name="count")
+    )
+
+    return total, yearly
+
+
+def interactive_workspace_piecharts(df):
+    """Return a Plotly pie chart with year selector showing workspace distribution."""
+
+    total, yearly = prepare_workspace_distribution(df)
+
+    fig = go.Figure()
     fig.add_trace(go.Pie(labels=total["Workspace"], values=total["count"], name="All"))
 
-    years = sorted(data["year"].dropna().unique())
+    years = sorted(yearly["year"].dropna().unique())
     for year in years:
-        year_data = data[data["year"] == year]
-        year_grouped = year_data.groupby("Workspace").size().reset_index(name="count")
-        fig.add_trace(go.Pie(labels=year_grouped["Workspace"], values=year_grouped["count"],
-                             name=str(int(year)), visible=False))
+        year_grouped = yearly[yearly["year"] == year]
+        fig.add_trace(
+            go.Pie(
+                labels=year_grouped["Workspace"],
+                values=year_grouped["count"],
+                name=str(int(year)),
+                visible=False,
+            )
+        )
 
     buttons = []
     n = len(fig.data)
-    buttons.append(dict(label="All", method="update",
-                        args=[{"visible": [True] + [False] * (n - 1)},
-                              {"title": "Workspace Distribution - All"}]))
+    buttons.append(
+        dict(
+            label="All",
+            method="update",
+            args=[
+                {"visible": [True] + [False] * (n - 1)},
+                {"title": "Workspace Distribution - All"},
+            ],
+        )
+    )
     for i, year in enumerate(years):
         vis = [False] * n
         vis[i + 1] = True
-        buttons.append(dict(label=str(int(year)), method="update",
-                            args=[{"visible": vis}, {"title": f"Workspace Distribution - {int(year)}"}]))
+        buttons.append(
+            dict(
+                label=str(int(year)),
+                method="update",
+                args=[
+                    {"visible": vis},
+                    {"title": f"Workspace Distribution - {int(year)}"},
+                ],
+            )
+        )
 
-    fig.update_layout(title="Workspace Distribution - All",
-                      updatemenus=[dict(buttons=buttons, direction="down")])
+    fig.update_layout(
+        title="Workspace Distribution - All",
+        updatemenus=[dict(buttons=buttons, direction="down")],
+    )
     return fig
 
 
