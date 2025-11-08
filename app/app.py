@@ -255,8 +255,10 @@ def dashboard():
     # Workspace Focus (last 30 days)
     if not df_global.empty:
         df_workspace = df_global.copy()
-        df_workspace['Created time'] = pd.to_datetime(df_workspace['Created time'], errors='coerce')
-        cutoff_date = datetime.now() - timedelta(days=30)
+        df_workspace['Created time'] = pd.to_datetime(
+            df_workspace['Created time'], errors='coerce', utc=True
+        )
+        cutoff_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=30)
         recent_workspace = df_workspace[df_workspace['Created time'] >= cutoff_date]
         if recent_workspace.empty:
             recent_workspace = df_workspace
