@@ -3,8 +3,9 @@ import glob
 import sqlite3
 import sys
 from datetime import datetime, timedelta
+from typing import Optional, Tuple
 
-from flask import Flask, render_template
+from flask import Flask, render_template, request
 import plotly.offline as pyo
 import plotly.graph_objects as go
 import pandas as pd
@@ -47,6 +48,13 @@ os.makedirs(IMG_DIR, exist_ok=True)
 
 df_global = None
 analysis_global = None
+
+TIME_RANGE_OPTIONS = {
+    "last-4-weeks": "Last 4 weeks",
+    "quarter-to-date": "Quarter to Date",
+    "year-to-date": "Year to Date",
+}
+DEFAULT_TIME_RANGE = "last-4-weeks"
 
 
 def _ensure_today_folder() -> None:
@@ -105,6 +113,78 @@ def _load_data():
     analysis_global = analysis
 
 
+def _get_timeframe_bounds(range_key: str) -> Tuple[Optional[pd.Timestamp], pd.Timestamp]:
+    """Return the (start, end) bounds for the selected dashboard range."""
+
+    today = pd.Timestamp.today().normalize()
+    if range_key == "last-4-weeks":
+        return today - pd.Timedelta(weeks=4), today
+    if range_key == "quarter-to-date":
+        quarter = today.quarter
+        start_month = 3 * (quarter - 1) + 1
+        start = pd.Timestamp(year=today.year, month=start_month, day=1)
+        return start, today
+    if range_key == "year-to-date":
+        start = pd.Timestamp(year=today.year, month=1, day=1)
+        return start, today
+    return None, today
+
+
+def _as_naive(series: pd.Series) -> pd.Series:
+    converted = pd.to_datetime(series, errors="coerce")
+    if pd.api.types.is_datetime64tz_dtype(converted.dtype):
+        converted = converted.dt.tz_localize(None)
+    return converted
+
+
+def _filter_dataframe_for_timeframe(
+    df: pd.DataFrame, start_date: Optional[pd.Timestamp]
+) -> pd.DataFrame:
+    if start_date is None or df.empty:
+        return df
+
+    data = df.copy()
+    mask = pd.Series(False, index=data.index)
+
+    if "Created time" in data.columns:
+        created = _as_naive(data["Created time"])
+        data["Created time"] = created
+        mask = mask | (created >= start_date)
+
+    if "Last edited" in data.columns:
+        edited = _as_naive(data["Last edited"])
+        data["Last edited"] = edited
+        mask = mask | (edited >= start_date)
+
+    return data.loc[mask].copy()
+
+
+def _trim_timeframe(
+    df: pd.DataFrame, column: str, start_date: Optional[pd.Timestamp]
+) -> pd.DataFrame:
+    if start_date is None or df.empty or column not in df.columns:
+        return df
+
+    values = _as_naive(df[column])
+    trimmed = df.loc[values >= start_date].copy()
+    return trimmed
+
+
+def _latest_activity_date(df: pd.DataFrame) -> Optional[pd.Timestamp]:
+    if df.empty:
+        return None
+
+    dates = []
+    for column in ("Created time", "Last edited"):
+        if column in df.columns:
+            series = _as_naive(df[column])
+            if not series.dropna().empty:
+                dates.append(series.max())
+    if not dates:
+        return None
+    return max(dates)
+
+
 @app.route('/')
 def index():
     return render_template('index.html')
@@ -139,10 +219,38 @@ def dashboard():
     if df_global is None or analysis_global is None:
         _load_data()
 
-    weekly_minutes = prepare_weekly_time_minutes(df_global)
-    weekly_counts = prepare_weekly_task_flow_counts(df_global)
-    daily_backlog = prepare_daily_time_backlog(df_global)
-    ttc_stats, ttc_done = prepare_ttc_statistics(df_global)
+    selected_range = request.args.get('range', DEFAULT_TIME_RANGE)
+    if selected_range not in TIME_RANGE_OPTIONS:
+        selected_range = DEFAULT_TIME_RANGE
+
+    start_date, default_end = _get_timeframe_bounds(selected_range)
+    df_filtered = _filter_dataframe_for_timeframe(df_global.copy(), start_date)
+
+    weekly_minutes = _trim_timeframe(
+        prepare_weekly_time_minutes(df_filtered), 'week_start', start_date
+    )
+    weekly_counts = _trim_timeframe(
+        prepare_weekly_task_flow_counts(df_filtered), 'week_start', start_date
+    )
+    daily_backlog = _trim_timeframe(
+        prepare_daily_time_backlog(df_filtered), 'date', start_date
+    )
+    ttc_stats, ttc_done = prepare_ttc_statistics(df_filtered)
+
+    if start_date is not None and not ttc_done.empty:
+        last_edited = _as_naive(ttc_done['Last edited'])
+        mask = last_edited >= start_date
+        ttc_done = ttc_done.loc[mask].copy()
+        ttc_done['Last edited'] = last_edited.loc[mask]
+
+    latest_activity = _latest_activity_date(df_filtered)
+    end_date = latest_activity or default_end
+    range_label = TIME_RANGE_OPTIONS[selected_range]
+    range_summary = (
+        f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
+        if start_date is not None
+        else "All available data"
+    )
 
     kpi_cards = []
 
@@ -252,13 +360,13 @@ def dashboard():
             }
         )
 
-    # Workspace Focus (last 30 days)
-    if not df_global.empty:
-        df_workspace = df_global.copy()
-        df_workspace['Created time'] = pd.to_datetime(
-            df_workspace['Created time'], errors='coerce', utc=True
-        )
-        cutoff_date = pd.Timestamp.now(tz='UTC') - pd.Timedelta(days=30)
+    # Workspace Focus (align with selected window)
+    if not df_filtered.empty:
+        df_workspace = df_filtered.copy()
+        df_workspace['Created time'] = _as_naive(df_workspace['Created time'])
+        cutoff_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=30)
+        if start_date is not None:
+            cutoff_date = max(cutoff_date, start_date)
         recent_workspace = df_workspace[df_workspace['Created time'] >= cutoff_date]
         if recent_workspace.empty:
             recent_workspace = df_workspace
@@ -283,16 +391,17 @@ def dashboard():
                     .apply(lambda x: (x == top_workspace).mean() * 100)
                     .dropna()
                 )
-                spark_div = _sparkline_div(
-                    share_series.index.strftime('%Y-%m-%d'),
-                    share_series.values,
-                    color="#20c997",
-                )
+                if not share_series.empty:
+                    spark_div = _sparkline_div(
+                        share_series.index.strftime('%Y-%m-%d'),
+                        share_series.values,
+                        color="#20c997",
+                    )
             kpi_cards.append(
                 {
                     'title': 'Workspace Focus',
                     'primary': f"{top_workspace}",
-                    'secondary': f"{share:.1f}% of last 30 days",
+                    'secondary': f"{share:.1f}% of {range_label.lower()}",
                     'delta': {'text': '', 'is_positive': True},
                     'sparkline': spark_div,
                     'footer': 'Share of tasks by workspace',
@@ -328,22 +437,28 @@ def dashboard():
         )
 
     # Trend charts for dashboard sections
-    weekly_counts_fig = interactive_weekly_task_flow_counts(df_global)
+    weekly_counts_fig = interactive_weekly_task_flow_counts(
+        df_filtered, start_date=start_date
+    )
     weekly_counts_div = _fig_to_div(weekly_counts_fig)
 
-    weekly_minutes_fig = interactive_weekly_time_minutes(df_global)
+    weekly_minutes_fig = interactive_weekly_time_minutes(
+        df_filtered, start_date=start_date
+    )
     weekly_minutes_div = _fig_to_div(weekly_minutes_fig)
 
-    backlog_fig = interactive_daily_time_backlog(df_global)
+    backlog_fig = interactive_daily_time_backlog(df_filtered, start_date=start_date)
     backlog_div = _fig_to_div(backlog_fig)
 
-    ttc_fig = interactive_ttc_histogram(df_global)
+    ttc_fig = interactive_ttc_histogram(df_filtered, start_date=start_date)
     ttc_div = _fig_to_div(ttc_fig)
 
-    workspace_fig = interactive_workspace_piecharts(df_global)
+    workspace_fig = interactive_workspace_piecharts(
+        df_filtered, start_date=start_date
+    )
     workspace_div = _fig_to_div(workspace_fig)
 
-    waterfall_fig = interactive_waterfall(df_global)
+    waterfall_fig = interactive_waterfall(df_filtered, start_date=start_date)
     waterfall_div = _fig_to_div(waterfall_fig)
 
     return render_template(
@@ -355,6 +470,10 @@ def dashboard():
         ttc_div=ttc_div,
         workspace_div=workspace_div,
         waterfall_div=waterfall_div,
+        range_options=TIME_RANGE_OPTIONS,
+        selected_range=selected_range,
+        range_label=range_label,
+        range_summary=range_summary,
     )
 
 
