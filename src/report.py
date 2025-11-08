@@ -25,6 +25,16 @@ def analyze_tasks(csv_path):
     df.columns = df.columns.str.strip()
     df = df.loc[:, ~df.columns.str.lower().duplicated()]
 
+    # Ensure numeric time estimates are parsed correctly if present
+    if "Estimated Time (min)" in df.columns:
+        df["Estimated Time (min)"] = pd.to_numeric(
+            df["Estimated Time (min)"], errors="coerce"
+        )
+    if "Actual time (min)" in df.columns:
+        df["Actual time (min)"] = pd.to_numeric(
+            df["Actual time (min)"], errors="coerce"
+        )
+
     # Convert relevant columns to datetime
     df["Created time"] = pd.to_datetime(df["Created time"], errors="coerce")
     df["Last edited"] = pd.to_datetime(df["Last edited"], errors="coerce")
@@ -737,6 +747,130 @@ def interactive_monthly_task_flow(analysis_df):
                       yaxis_title="Number of Tasks",
                       barmode="relative",
                       updatemenus=[dict(buttons=buttons, direction="down")])
+    return fig
+
+
+def interactive_weekly_time_minutes(df):
+    """Return a Plotly figure summing estimated/actual minutes per week."""
+
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    data["Last edited"] = pd.to_datetime(data["Last edited"], errors="coerce")
+
+    if "Estimated Time (min)" in data.columns:
+        data["estimated_minutes"] = pd.to_numeric(
+            data["Estimated Time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["estimated_minutes"] = 0
+
+    if "Actual time (min)" in data.columns:
+        data["actual_minutes"] = pd.to_numeric(
+            data["Actual time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["actual_minutes"] = 0
+
+    created = data.dropna(subset=["Created time"]).copy()
+    created["week"] = created["Created time"].dt.to_period("W-MON")
+    weekly_estimated = created.groupby("week")["estimated_minutes"].sum().rename(
+        "estimated_minutes"
+    )
+
+    done = data[data["Status"].str.lower() == "done"].dropna(subset=["Last edited"]).copy()
+    done["week"] = done["Last edited"].dt.to_period("W-MON")
+    weekly_actual = done.groupby("week")["actual_minutes"].sum().rename(
+        "actual_minutes"
+    )
+
+    weekly = pd.concat([weekly_estimated, weekly_actual], axis=1).fillna(0)
+    weekly.index = weekly.index.to_timestamp()
+    weekly = weekly.sort_index().reset_index().rename(columns={"index": "week_start"})
+    weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
+    weekly["year"] = weekly["week_start"].dt.year
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=weekly["label"],
+            y=-weekly["estimated_minutes"],
+            name="Estimated Minutes (Created)",
+            marker_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=weekly["label"],
+            y=weekly["actual_minutes"],
+            name="Actual Minutes (Done)",
+            marker_color="green",
+        )
+    )
+
+    years = sorted(weekly["year"].dropna().unique())
+    for year in years:
+        subset = weekly[weekly["year"] == year]
+        fig.add_trace(
+            go.Bar(
+                x=subset["label"],
+                y=-subset["estimated_minutes"],
+                name="Estimated Minutes (Created)",
+                marker_color="red",
+                visible=False,
+            )
+        )
+        fig.add_trace(
+            go.Bar(
+                x=subset["label"],
+                y=subset["actual_minutes"],
+                name="Actual Minutes (Done)",
+                marker_color="green",
+                visible=False,
+            )
+        )
+
+    buttons = []
+    n_base = 2
+    total_traces = len(fig.data)
+    buttons.append(
+        dict(
+            label="All",
+            method="update",
+            args=[
+                {"visible": [True, True] + [False] * (total_traces - n_base)},
+                {
+                    "title": "Weekly Task Time (Minutes) - All",
+                    "yaxis": {"title": "Minutes"},
+                },
+            ],
+        )
+    )
+
+    for i, year in enumerate(years):
+        vis = [False] * total_traces
+        start = n_base + i * n_base
+        vis[start:start + n_base] = [True, True]
+        buttons.append(
+            dict(
+                label=str(int(year)),
+                method="update",
+                args=[
+                    {"visible": vis},
+                    {
+                        "title": f"Weekly Task Time (Minutes) - {int(year)}",
+                        "yaxis": {"title": "Minutes"},
+                    },
+                ],
+            )
+        )
+
+    fig.update_layout(
+        title="Weekly Task Time (Minutes) - All",
+        xaxis_title="Week Start",
+        yaxis_title="Minutes",
+        barmode="relative",
+        updatemenus=[dict(buttons=buttons, direction="down")],
+    )
     return fig
 
 
