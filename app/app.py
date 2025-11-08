@@ -30,6 +30,7 @@ from src.report import (
     interactive_weekly_time_minutes,
     interactive_weekly_task_flow_counts,
     interactive_workspace_piecharts,
+    interactive_daily_time_backlog,
     interactive_waterfall,
 )
 app = Flask(__name__, static_folder="static", template_folder="templates")
@@ -153,9 +154,15 @@ def interactive_taskflow():
 def interactive_time_minutes():
     if df_global is None:
         _load_data()
-    fig = interactive_weekly_time_minutes(df_global)
-    div = _fig_to_div(fig)
-    return render_template('interactive/time_minutes.html', plot_div=div)
+    weekly_fig = interactive_weekly_time_minutes(df_global)
+    backlog_fig = interactive_daily_time_backlog(df_global)
+    weekly_div = _fig_to_div(weekly_fig)
+    backlog_div = _fig_to_div(backlog_fig)
+    return render_template(
+        'interactive/time_minutes.html',
+        weekly_div=weekly_div,
+        backlog_div=backlog_div,
+    )
 
 
 @app.route('/interactive/taskflow-weekly')
