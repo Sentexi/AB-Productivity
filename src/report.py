@@ -785,7 +785,9 @@ def interactive_weekly_time_minutes(df):
 
     weekly = pd.concat([weekly_estimated, weekly_actual], axis=1).fillna(0)
     weekly.index = weekly.index.to_timestamp()
-    weekly = weekly.sort_index().reset_index().rename(columns={"index": "week_start"})
+    weekly = weekly.sort_index()
+    weekly.index.name = "week_start"
+    weekly = weekly.reset_index()
     weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
     weekly["year"] = weekly["week_start"].dt.year
 
@@ -868,6 +870,116 @@ def interactive_weekly_time_minutes(df):
         title="Weekly Task Time (Minutes) - All",
         xaxis_title="Week Start",
         yaxis_title="Minutes",
+        barmode="relative",
+        updatemenus=[dict(buttons=buttons, direction="down")],
+    )
+    return fig
+
+
+def interactive_weekly_task_flow_counts(df):
+    """Return a Plotly figure with weekly task counts and year selector."""
+
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data.get("Created time"), errors="coerce")
+    data["Last edited"] = pd.to_datetime(data.get("Last edited"), errors="coerce")
+    statuses = data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    data["status_normalized"] = statuses.str.lower()
+
+    created = data.dropna(subset=["Created time"]).copy()
+    created["week"] = created["Created time"].dt.to_period("W-MON")
+    weekly_created = created.groupby("week").size().rename("tasks_created")
+
+    done = data[data["status_normalized"] == "done"].dropna(subset=["Last edited"]).copy()
+    done["week"] = done["Last edited"].dt.to_period("W-MON")
+    weekly_done = done.groupby("week").size().rename("tasks_done")
+
+    weekly = pd.concat([weekly_created, weekly_done], axis=1).fillna(0)
+    weekly.index = weekly.index.to_timestamp()
+    weekly = weekly.sort_index()
+    weekly.index.name = "week_start"
+    weekly = weekly.reset_index()
+    weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
+    weekly["year"] = weekly["week_start"].dt.year
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=weekly["label"],
+            y=-weekly["tasks_created"],
+            name="Tasks Created",
+            marker_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=weekly["label"],
+            y=weekly["tasks_done"],
+            name="Tasks Done",
+            marker_color="green",
+        )
+    )
+
+    years = sorted(weekly["year"].dropna().unique())
+    for year in years:
+        subset = weekly[weekly["year"] == year]
+        fig.add_trace(
+            go.Bar(
+                x=subset["label"],
+                y=-subset["tasks_created"],
+                name="Tasks Created",
+                marker_color="red",
+                visible=False,
+            )
+        )
+        fig.add_trace(
+            go.Bar(
+                x=subset["label"],
+                y=subset["tasks_done"],
+                name="Tasks Done",
+                marker_color="green",
+                visible=False,
+            )
+        )
+
+    buttons = []
+    n_base = 2
+    total_traces = len(fig.data)
+    buttons.append(
+        dict(
+            label="All",
+            method="update",
+            args=[
+                {"visible": [True, True] + [False] * (total_traces - n_base)},
+                {
+                    "title": "Weekly Task Flow (Counts) - All",
+                    "yaxis": {"title": "Number of Tasks"},
+                },
+            ],
+        )
+    )
+
+    for i, year in enumerate(years):
+        vis = [False] * total_traces
+        start = n_base + i * n_base
+        vis[start:start + n_base] = [True, True]
+        buttons.append(
+            dict(
+                label=str(int(year)),
+                method="update",
+                args=[
+                    {"visible": vis},
+                    {
+                        "title": f"Weekly Task Flow (Counts) - {int(year)}",
+                        "yaxis": {"title": "Number of Tasks"},
+                    },
+                ],
+            )
+        )
+
+    fig.update_layout(
+        title="Weekly Task Flow (Counts) - All",
+        xaxis_title="Week Start",
+        yaxis_title="Number of Tasks",
         barmode="relative",
         updatemenus=[dict(buttons=buttons, direction="down")],
     )
