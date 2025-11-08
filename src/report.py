@@ -777,7 +777,16 @@ def interactive_weekly_time_minutes(df):
         "estimated_minutes"
     )
 
-    done = data[data["Status"].str.lower() == "done"].dropna(subset=["Last edited"]).copy()
+    statuses = (
+        data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    )
+    data["status_normalized"] = statuses.str.lower()
+
+    done = (
+        data[data["status_normalized"] == "done"]
+        .dropna(subset=["Last edited"])
+        .copy()
+    )
     done["week"] = done["Last edited"].dt.to_period("W-MON")
     weekly_actual = done.groupby("week")["actual_minutes"].sum().rename(
         "actual_minutes"
@@ -873,6 +882,82 @@ def interactive_weekly_time_minutes(df):
         barmode="relative",
         updatemenus=[dict(buttons=buttons, direction="down")],
     )
+    return fig
+
+
+def interactive_daily_time_backlog(df):
+    """Return a Plotly figure showing daily backlog changes and cumulative minutes."""
+
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    data["Last edited"] = pd.to_datetime(data["Last edited"], errors="coerce")
+
+    if "Estimated Time (min)" in data.columns:
+        data["estimated_minutes"] = pd.to_numeric(
+            data["Estimated Time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["estimated_minutes"] = 0
+
+    if "Actual time (min)" in data.columns:
+        data["actual_minutes"] = pd.to_numeric(
+            data["Actual time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["actual_minutes"] = 0
+
+    statuses = (
+        data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    )
+    data["status_normalized"] = statuses.str.lower()
+
+    created = data.dropna(subset=["Created time"]).copy()
+    created["date"] = created["Created time"].dt.date
+    daily_incoming = (
+        created.groupby("date")["estimated_minutes"].sum().rename("incoming_minutes")
+    )
+
+    done = data[data["status_normalized"] == "done"].dropna(subset=["Last edited"]).copy()
+    done["date"] = done["Last edited"].dt.date
+    daily_completed = (
+        done.groupby("date")["actual_minutes"].sum().rename("completed_minutes")
+    )
+
+    daily = pd.concat([daily_incoming, daily_completed], axis=1).fillna(0)
+    daily.index = pd.to_datetime(daily.index)
+    daily = daily.sort_index().reset_index().rename(columns={"index": "date"})
+    daily["net_change"] = daily["incoming_minutes"] - daily["completed_minutes"]
+    daily["cumulative_backlog"] = daily["net_change"].cumsum()
+
+    colors = ["red" if val > 0 else "green" for val in daily["net_change"]]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=daily["date"],
+            y=daily["net_change"],
+            name="Net Change (Minutes)",
+            marker_color=colors,
+        )
+    )
+    fig.add_trace(
+        go.Scatter(
+            x=daily["date"],
+            y=daily["cumulative_backlog"],
+            mode="lines+markers",
+            name="Cumulative Backlog",
+            line=dict(color="black"),
+        )
+    )
+
+    fig.update_layout(
+        title="Daily Backlog (Minutes)",
+        xaxis_title="Date",
+        yaxis_title="Minutes",
+        barmode="relative",
+        legend=dict(orientation="h", yanchor="bottom", y=1.02, xanchor="right", x=1),
+    )
+
     return fig
 
 

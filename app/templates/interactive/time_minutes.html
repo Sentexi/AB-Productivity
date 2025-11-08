@@ -2,5 +2,9 @@
 {% block title %}Weekly Time (Minutes){% endblock %}
 {% block content %}
 <h1 class="mt-4 mb-4">Weekly Task Time (Minutes)</h1>
-{{ plot_div|safe }}
+{{ weekly_div|safe }}
+
+<h2 class="mt-5 mb-3">Daily Backlog (Minutes)</h2>
+<p class="text-muted">Incoming tasks add estimated minutes while completed tasks subtract actual minutes, showing how the backlog shifts each day.</p>
+{{ backlog_div|safe }}
 {% endblock %}
