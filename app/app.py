@@ -2,10 +2,12 @@ import os
 import glob
 import sqlite3
 import sys
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from flask import Flask, render_template
 import plotly.offline as pyo
+import plotly.graph_objects as go
+import pandas as pd
 
 BASE_DIR = os.path.dirname(__file__)
 ROOT_DIR = os.path.abspath(os.path.join(BASE_DIR, '..'))
@@ -32,6 +34,10 @@ from src.report import (
     interactive_workspace_piecharts,
     interactive_daily_time_backlog,
     interactive_waterfall,
+    prepare_weekly_time_minutes,
+    prepare_daily_time_backlog,
+    prepare_weekly_task_flow_counts,
+    prepare_ttc_statistics,
 )
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -128,8 +134,272 @@ def interactive_index():
     return render_template('interactive/index.html')
 
 
+@app.route('/dashboard')
+def dashboard():
+    if df_global is None or analysis_global is None:
+        _load_data()
+
+    weekly_minutes = prepare_weekly_time_minutes(df_global)
+    weekly_counts = prepare_weekly_task_flow_counts(df_global)
+    daily_backlog = prepare_daily_time_backlog(df_global)
+    ttc_stats, ttc_done = prepare_ttc_statistics(df_global)
+
+    kpi_cards = []
+
+    # Weekly Throughput
+    if not weekly_counts.empty:
+        weekly_counts_sorted = weekly_counts.sort_values('week_start')
+        latest_week = weekly_counts_sorted.iloc[-1]
+        prev_week = weekly_counts_sorted.iloc[-2] if len(weekly_counts_sorted) > 1 else None
+        delta_done = (
+            latest_week['tasks_done'] - prev_week['tasks_done']
+            if prev_week is not None
+            else None
+        )
+        spark_weeks = weekly_counts_sorted.tail(8)
+        spark_div = _sparkline_div(
+            spark_weeks['label'],
+            spark_weeks['tasks_done'] - spark_weeks['tasks_created'],
+            color="#198754",
+        )
+        kpi_cards.append(
+            {
+                'title': 'Weekly Throughput',
+                'primary': f"{int(latest_week['tasks_done'])} done",
+                'secondary': f"{int(latest_week['tasks_created'])} created",
+                'delta': _format_delta(delta_done, unit=" vs prior"),
+                'sparkline': spark_div,
+                'footer': f"Week of {latest_week['label']}",
+            }
+        )
+
+    # Time Investment
+    if not weekly_minutes.empty:
+        weekly_minutes_sorted = weekly_minutes.sort_values('week_start')
+        latest_time = weekly_minutes_sorted.iloc[-1]
+        variance = latest_time['actual_minutes'] - latest_time['estimated_minutes']
+        spark_time = weekly_minutes_sorted.tail(8)
+        spark_div = _sparkline_div(
+            spark_time['label'],
+            spark_time['actual_minutes'],
+            color="#0d6efd",
+        )
+        delta = _format_delta(variance, unit=" min", invert=True)
+        kpi_cards.append(
+            {
+                'title': 'Time Investment',
+                'primary': f"{int(latest_time['actual_minutes']):,} min actual",
+                'secondary': f"{int(latest_time['estimated_minutes']):,} min planned",
+                'delta': delta,
+                'sparkline': spark_div,
+                'footer': 'Variance vs plan (lower is better)',
+            }
+        )
+
+    # Backlog Snapshot
+    if not daily_backlog.empty:
+        daily_sorted = daily_backlog.sort_values('date')
+        latest_day = daily_sorted.iloc[-1]
+        prev_day = daily_sorted.iloc[-2] if len(daily_sorted) > 1 else None
+        delta_backlog = (
+            latest_day['cumulative_backlog'] - prev_day['cumulative_backlog']
+            if prev_day is not None
+            else None
+        )
+        spark_daily = daily_sorted.tail(14)
+        spark_div = _sparkline_div(
+            spark_daily['date'],
+            spark_daily['cumulative_backlog'],
+            color="#6610f2",
+        )
+        kpi_cards.append(
+            {
+                'title': 'Backlog Snapshot',
+                'primary': _format_number(latest_day['cumulative_backlog'], unit=' min'),
+                'secondary': f"Net {int(latest_day['net_change']):,} min last day",
+                'delta': _format_delta(delta_backlog, unit=' min', invert=True),
+                'sparkline': spark_div,
+                'footer': f"Updated {latest_day['date']:%b %d, %Y}",
+            }
+        )
+
+    # Median TTC
+    stats = ttc_stats
+    recent_median = stats.get('recent_median')
+    overall_median = stats.get('overall_median')
+    if recent_median is not None or overall_median is not None:
+        delta_value = None
+        if recent_median is not None and overall_median is not None:
+            delta_value = recent_median - overall_median
+        recent_series = (
+            ttc_done.sort_values('Last edited').tail(30)
+            if not ttc_done.empty
+            else pd.DataFrame(columns=['Last edited', 'TTC'])
+        )
+        spark_div = _sparkline_div(
+            recent_series['Last edited'],
+            recent_series['TTC'],
+            color="#fd7e14",
+        )
+        kpi_cards.append(
+            {
+                'title': 'Median TTC',
+                'primary': _format_number(recent_median, unit=' days'),
+                'secondary': f"Overall { _format_number(overall_median, unit=' days') }",
+                'delta': _format_delta(delta_value, unit=' days', invert=True),
+                'sparkline': spark_div,
+                'footer': f"{stats.get('recent_count', 0)} tasks completed in window",
+            }
+        )
+
+    # Workspace Focus (last 30 days)
+    if not df_global.empty:
+        df_workspace = df_global.copy()
+        df_workspace['Created time'] = pd.to_datetime(df_workspace['Created time'], errors='coerce')
+        cutoff_date = datetime.now() - timedelta(days=30)
+        recent_workspace = df_workspace[df_workspace['Created time'] >= cutoff_date]
+        if recent_workspace.empty:
+            recent_workspace = df_workspace
+        workspace_counts = (
+            recent_workspace.groupby('Workspace').size().sort_values(ascending=False)
+        )
+        if not workspace_counts.empty:
+            top_workspace_raw = workspace_counts.index[0]
+            top_workspace = (
+                str(top_workspace_raw)
+                if pd.notna(top_workspace_raw)
+                else 'Unspecified'
+            )
+            total_recent = workspace_counts.sum()
+            share = workspace_counts.iloc[0] / total_recent * 100 if total_recent else 0
+            spark_div = None
+            if workspace_counts.shape[0] > 1:
+                share_series = (
+                    recent_workspace
+                    .set_index('Created time')
+                    .groupby(pd.Grouper(freq='W'))['Workspace']
+                    .apply(lambda x: (x == top_workspace).mean() * 100)
+                    .dropna()
+                )
+                spark_div = _sparkline_div(
+                    share_series.index.strftime('%Y-%m-%d'),
+                    share_series.values,
+                    color="#20c997",
+                )
+            kpi_cards.append(
+                {
+                    'title': 'Workspace Focus',
+                    'primary': f"{top_workspace}",
+                    'secondary': f"{share:.1f}% of last 30 days",
+                    'delta': {'text': '', 'is_positive': True},
+                    'sparkline': spark_div,
+                    'footer': 'Share of tasks by workspace',
+                }
+            )
+
+    # Flow Streak
+    if not daily_backlog.empty:
+        streak = 0
+        for change in reversed(daily_backlog.sort_values('date')['net_change']):
+            if change <= 0:
+                streak += 1
+            else:
+                break
+        spark_div = _sparkline_div(
+            daily_backlog.tail(14)['date'],
+            daily_backlog.tail(14)['net_change'],
+            color="#dc3545",
+        )
+        kpi_cards.append(
+            {
+                'title': 'Flow Streak',
+                'primary': f"{streak} day streak",
+                'secondary': 'Completions ≥ inflow',
+                'delta': _format_delta(
+                    daily_backlog.iloc[-1]['net_change'],
+                    unit=' min net',
+                    invert=True,
+                ),
+                'sparkline': spark_div,
+                'footer': 'Recent daily net changes',
+            }
+        )
+
+    # Trend charts for dashboard sections
+    weekly_counts_fig = interactive_weekly_task_flow_counts(df_global)
+    weekly_counts_div = _fig_to_div(weekly_counts_fig)
+
+    weekly_minutes_fig = interactive_weekly_time_minutes(df_global)
+    weekly_minutes_div = _fig_to_div(weekly_minutes_fig)
+
+    backlog_fig = interactive_daily_time_backlog(df_global)
+    backlog_div = _fig_to_div(backlog_fig)
+
+    ttc_fig = interactive_ttc_histogram(df_global)
+    ttc_div = _fig_to_div(ttc_fig)
+
+    workspace_fig = interactive_workspace_piecharts(df_global)
+    workspace_div = _fig_to_div(workspace_fig)
+
+    waterfall_fig = interactive_waterfall(df_global)
+    waterfall_div = _fig_to_div(waterfall_fig)
+
+    return render_template(
+        'dashboard.html',
+        kpi_cards=kpi_cards,
+        weekly_counts_div=weekly_counts_div,
+        weekly_minutes_div=weekly_minutes_div,
+        backlog_div=backlog_div,
+        ttc_div=ttc_div,
+        workspace_div=workspace_div,
+        waterfall_div=waterfall_div,
+    )
+
+
 def _fig_to_div(fig):
     return pyo.plot(fig, output_type='div', include_plotlyjs='cdn')
+
+
+def _format_number(value, unit=""):
+    if value is None:
+        return "—"
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
+    formatted = f"{value:,.0f}" if isinstance(value, int) else f"{value:,.1f}"
+    return f"{formatted}{unit}"
+
+
+def _format_delta(value, unit="", invert=False):
+    if value is None:
+        return {"text": "", "is_positive": False}
+    sign = "" if value < 0 else "+"
+    text = f"{sign}{value:,.1f}{unit}" if isinstance(value, float) else f"{sign}{int(value)}{unit}"
+    is_positive = value >= 0
+    if invert:
+        is_positive = not is_positive
+    return {"text": text, "is_positive": is_positive}
+
+
+def _sparkline_div(x_values, y_values, color="#0d6efd"):
+    if len(x_values) == 0:
+        return None
+    fig = go.Figure()
+    fig.add_trace(
+        go.Scatter(
+            x=x_values,
+            y=y_values,
+            mode="lines",
+            line=dict(color=color, width=2),
+            hoverinfo="skip",
+        )
+    )
+    fig.update_layout(
+        margin=dict(l=0, r=0, t=0, b=0),
+        xaxis=dict(visible=False),
+        yaxis=dict(visible=False),
+        height=120,
+    )
+    return _fig_to_div(fig)
 
 
 @app.route('/interactive/ttc')

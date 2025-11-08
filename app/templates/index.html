@@ -3,4 +3,8 @@
 {% block content %}
 <h1 class="mt-4">Task Analytics Dashboard</h1>
 <p class="lead">Welcome! View the generated graphs and analyses from your latest export.</p>
+<div class="mt-4 d-flex flex-wrap gap-3">
+  <a class="btn btn-primary" href="{{ url_for('dashboard') }}">Open consolidated dashboard</a>
+  <a class="btn btn-outline-secondary" href="{{ url_for('interactive_index') }}">Explore interactive views</a>
+</div>
 {% endblock %}

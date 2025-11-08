@@ -1,0 +1,245 @@
+{% extends 'base.html' %}
+{% block content %}
+<div class="container-xxl py-4">
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-body d-flex flex-column flex-lg-row justify-content-between align-items-lg-center">
+          <div>
+            <h1 class="h3 mb-2">Productivity dashboard</h1>
+            <p class="text-muted mb-0">A card-driven overview that combines weekly throughput, time investment, backlog trend and focus insights into a single glance.</p>
+          </div>
+          <div class="d-flex gap-2 mt-3 mt-lg-0">
+            <button class="btn btn-outline-primary btn-sm" type="button">Last 4 weeks</button>
+            <button class="btn btn-outline-primary btn-sm" type="button">Quarter to date</button>
+            <button class="btn btn-outline-primary btn-sm" type="button">Year to date</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 row-cols-1 row-cols-md-2 row-cols-xl-3 mb-4">
+    {% for card in kpi_cards %}
+    <div class="col">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-start mb-3">
+            <div>
+              <h2 class="h6 text-uppercase text-muted mb-1">{{ card.title }}</h2>
+              <div class="fs-4 fw-semibold">{{ card.primary }}</div>
+            </div>
+            {% if card.delta and card.delta.text and card.delta.text != '' %}
+            <span class="badge rounded-pill {% if card.delta.is_positive %}bg-success-subtle text-success{% else %}bg-danger-subtle text-danger{% endif %}">{{ card.delta.text }}</span>
+            {% endif %}
+          </div>
+          <p class="text-muted small mb-2">{{ card.secondary }}</p>
+          {% if card.sparkline %}
+          <div class="ratio" style="--bs-aspect-ratio:30%; min-height:120px;">
+            {{ card.sparkline|safe }}
+          </div>
+          {% endif %}
+        </div>
+        <div class="card-footer bg-transparent border-0 text-muted small">
+          {{ card.footer }}
+        </div>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-xl-6">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Weekly task flow (counts)</h3>
+            <a href="{{ url_for('interactive_taskflow_weekly') }}" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ weekly_counts_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="weeklyCountsNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="weeklyCountsHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#weeklyCountsCollapse" aria-expanded="false" aria-controls="weeklyCountsCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="weeklyCountsCollapse" class="accordion-collapse collapse" data-bs-parent="#weeklyCountsNotes">
+                <div class="accordion-body text-muted">
+                  Created work is rendered as red bars (negative axis) while completions appear in green, helping you spot throughput balance shifts week over week.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Weekly time investment</h3>
+            <a href="{{ url_for('interactive_time_minutes') }}" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ weekly_minutes_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="weeklyMinutesNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="weeklyMinutesHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#weeklyMinutesCollapse" aria-expanded="false" aria-controls="weeklyMinutesCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="weeklyMinutesCollapse" class="accordion-collapse collapse" data-bs-parent="#weeklyMinutesNotes">
+                <div class="accordion-body text-muted">
+                  Estimated minutes sit below the axis while delivered minutes sit above, so positive area indicates clearings of planned workload.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Backlog trajectory</h3>
+            <a href="{{ url_for('interactive_time_minutes') }}#backlog" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ backlog_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="backlogNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="backlogHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#backlogCollapse" aria-expanded="false" aria-controls="backlogCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="backlogCollapse" class="accordion-collapse collapse" data-bs-parent="#backlogNotes">
+                <div class="accordion-body text-muted">
+                  Bars highlight daily net backlog change, while the black line tracks cumulative minutes to reveal inflection points.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-4">
+    <div class="col-12 col-xl-6">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Time-to-completion distribution</h3>
+            <a href="{{ url_for('interactive_ttc') }}" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ ttc_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="ttcNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="ttcHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#ttcCollapse" aria-expanded="false" aria-controls="ttcCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="ttcCollapse" class="accordion-collapse collapse" data-bs-parent="#ttcNotes">
+                <div class="accordion-body text-muted">
+                  Switch the dropdown to isolate yearly cohorts and monitor how cycle times shift over time without losing the aggregate view.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+    <div class="col-12 col-xl-6">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Workspace mix</h3>
+            <a href="{{ url_for('interactive_workspace') }}" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ workspace_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="workspaceNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="workspaceHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#workspaceCollapse" aria-expanded="false" aria-controls="workspaceCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="workspaceCollapse" class="accordion-collapse collapse" data-bs-parent="#workspaceNotes">
+                <div class="accordion-body text-muted">
+                  Click legend items to isolate a workspace and gauge how its contribution has changed across time ranges.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-5">
+    <div class="col-12">
+      <div class="card h-100 shadow-sm border-0">
+        <div class="card-body">
+          <div class="d-flex justify-content-between align-items-center mb-3">
+            <h3 class="h5 mb-0">Waterfall overview</h3>
+            <a href="{{ url_for('interactive_waterfall_route') }}" class="btn btn-sm btn-outline-secondary">Open detail</a>
+          </div>
+          {{ waterfall_div|safe }}
+        </div>
+        <div class="card-footer bg-transparent border-0">
+          <div class="accordion" id="waterfallNotes">
+            <div class="accordion-item border-0">
+              <h2 class="accordion-header" id="waterfallHeading">
+                <button class="accordion-button collapsed" type="button" data-bs-toggle="collapse" data-bs-target="#waterfallCollapse" aria-expanded="false" aria-controls="waterfallCollapse">
+                  Notes
+                </button>
+              </h2>
+              <div id="waterfallCollapse" class="accordion-collapse collapse" data-bs-parent="#waterfallNotes">
+                <div class="accordion-body text-muted">
+                  The waterfall combines weekly net changes and cumulative totals to surface inflection points in backlog health.
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="row g-4 mb-5">
+    <div class="col-12">
+      <div class="card shadow-sm border-0">
+        <div class="card-body">
+          <h3 class="h5">Deep-dive links</h3>
+          <p class="text-muted">Jump straight into the interactive explorers for more granular analysis.</p>
+          <div class="d-flex flex-wrap gap-2">
+            <a href="{{ url_for('interactive_index') }}" class="btn btn-outline-primary btn-sm">Interactive hub</a>
+            <a href="{{ url_for('interactive_taskflow') }}" class="btn btn-outline-primary btn-sm">Monthly task flow</a>
+            <a href="{{ url_for('interactive_taskflow_weekly') }}" class="btn btn-outline-primary btn-sm">Weekly counts</a>
+            <a href="{{ url_for('interactive_time_minutes') }}" class="btn btn-outline-primary btn-sm">Time minutes</a>
+            <a href="{{ url_for('interactive_ttc') }}" class="btn btn-outline-primary btn-sm">Time to completion</a>
+            <a href="{{ url_for('interactive_workspace') }}" class="btn btn-outline-primary btn-sm">Workspace mix</a>
+            <a href="{{ url_for('interactive_waterfall_route') }}" class="btn btn-outline-primary btn-sm">Waterfall</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+{% endblock %}
