@@ -9,10 +9,21 @@
             <h1 class="h3 mb-2">Productivity dashboard</h1>
             <p class="text-muted mb-0">A card-driven overview that combines weekly throughput, time investment, backlog trend and focus insights into a single glance.</p>
           </div>
-          <div class="d-flex gap-2 mt-3 mt-lg-0">
-            <button class="btn btn-outline-primary btn-sm" type="button">Last 4 weeks</button>
-            <button class="btn btn-outline-primary btn-sm" type="button">Quarter to date</button>
-            <button class="btn btn-outline-primary btn-sm" type="button">Year to date</button>
+          <div class="d-flex flex-column flex-sm-row align-items-sm-center align-items-lg-end gap-2 mt-3 mt-lg-0">
+            <div class="d-flex gap-2 flex-wrap justify-content-sm-end">
+              {% for key, label in range_options.items() %}
+              <a
+                href="{{ url_for('dashboard', range=key) }}"
+                class="btn btn-outline-primary btn-sm {% if selected_range == key %}active{% endif %}"
+                {% if selected_range == key %}aria-current="page"{% endif %}
+              >
+                {{ label }}
+              </a>
+              {% endfor %}
+            </div>
+            <span class="text-muted small text-sm-end">
+              Viewing {{ range_label }} ({{ range_summary }})
+            </span>
           </div>
         </div>
       </div>

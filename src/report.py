@@ -1,6 +1,8 @@
 import os
 import glob
 import argparse
+from typing import Optional
+
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
@@ -666,7 +668,7 @@ def plot_liberal_stuff_done_heatmaps(df, output_folder):
 # Interactive Plotly Versions
 # =====================
 
-def interactive_ttc_histogram(df):
+def interactive_ttc_histogram(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure of the TTC histogram with a year selector."""
     done_tasks = df[df["Status"].str.lower() == "done"].copy()
     done_tasks["Created time"] = pd.to_datetime(done_tasks["Created time"], errors="coerce")
@@ -675,6 +677,11 @@ def interactive_ttc_histogram(df):
 
     done_tasks["TTC"] = (done_tasks["Last edited"] - done_tasks["Created time"]).dt.days
     done_tasks = done_tasks[done_tasks["TTC"] >= 0]
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None and not done_tasks.empty:
+        done_tasks = done_tasks[done_tasks["Last edited"] >= start_ts]
+    if done_tasks.empty:
+        return go.Figure()
     done_tasks["year"] = done_tasks["Created time"].dt.year
 
     cutoff = int(done_tasks["TTC"].quantile(0.95))
@@ -837,10 +844,25 @@ def prepare_weekly_time_minutes(df):
     return weekly
 
 
-def interactive_weekly_time_minutes(df):
+def _normalize_start_date(start_date: Optional[pd.Timestamp]) -> Optional[pd.Timestamp]:
+    """Return a tz-naive pandas Timestamp for comparisons."""
+
+    if start_date is None:
+        return None
+
+    ts = pd.Timestamp(start_date)
+    if ts.tzinfo is not None:
+        ts = ts.tz_convert("UTC").tz_localize(None)
+    return ts
+
+
+def interactive_weekly_time_minutes(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure summing estimated/actual minutes per week."""
 
     weekly = prepare_weekly_time_minutes(df)
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None and not weekly.empty:
+        weekly = weekly[weekly["week_start"] >= start_ts]
 
     fig = go.Figure()
     fig.add_trace(
@@ -974,10 +996,13 @@ def prepare_daily_time_backlog(df):
     return daily
 
 
-def interactive_daily_time_backlog(df):
+def interactive_daily_time_backlog(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure showing daily backlog changes and cumulative minutes."""
 
     daily = prepare_daily_time_backlog(df)
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None and not daily.empty:
+        daily = daily[daily["date"] >= start_ts]
 
     colors = ["red" if val > 0 else "green" for val in daily["net_change"]]
 
@@ -1039,10 +1064,13 @@ def prepare_weekly_task_flow_counts(df):
     return weekly
 
 
-def interactive_weekly_task_flow_counts(df):
+def interactive_weekly_task_flow_counts(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure with weekly task counts and year selector."""
 
     weekly = prepare_weekly_task_flow_counts(df)
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None and not weekly.empty:
+        weekly = weekly[weekly["week_start"] >= start_ts]
 
     fig = go.Figure()
     fig.add_trace(
@@ -1129,11 +1157,16 @@ def interactive_weekly_task_flow_counts(df):
     return fig
 
 
-def prepare_workspace_distribution(df):
+def prepare_workspace_distribution(df, start_date: Optional[pd.Timestamp] = None):
     """Return a dataframe summarising workspace counts overall and per year."""
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    if pd.api.types.is_datetime64tz_dtype(data["Created time"].dtype):
+        data["Created time"] = data["Created time"].dt.tz_localize(None)
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None:
+        data = data[data["Created time"] >= start_ts]
     data["year"] = data["Created time"].dt.year
 
     total = data.groupby("Workspace").size().reset_index(name="count")
@@ -1146,10 +1179,10 @@ def prepare_workspace_distribution(df):
     return total, yearly
 
 
-def interactive_workspace_piecharts(df):
+def interactive_workspace_piecharts(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly pie chart with year selector showing workspace distribution."""
 
-    total, yearly = prepare_workspace_distribution(df)
+    total, yearly = prepare_workspace_distribution(df, start_date=start_date)
 
     fig = go.Figure()
     fig.add_trace(go.Pie(labels=total["Workspace"], values=total["count"], name="All"))
@@ -1199,35 +1232,50 @@ def interactive_workspace_piecharts(df):
     return fig
 
 
-def interactive_waterfall(df):
+def interactive_waterfall(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly waterfall showing cumulative tasks with year selector."""
     df = df.copy()
     df["Created time"] = pd.to_datetime(df["Created time"], errors="coerce")
     df["Last edited"] = pd.to_datetime(df["Last edited"], errors="coerce")
+    if pd.api.types.is_datetime64tz_dtype(df["Created time"].dtype):
+        df["Created time"] = df["Created time"].dt.tz_localize(None)
+    if pd.api.types.is_datetime64tz_dtype(df["Last edited"].dtype):
+        df["Last edited"] = df["Last edited"].dt.tz_localize(None)
+
+    start_ts = _normalize_start_date(start_date)
+    if start_ts is not None:
+        df = df[
+            (df["Created time"] >= start_ts)
+            | (df["Last edited"] >= start_ts)
+        ]
+
     df["Created date"] = df["Created time"].dt.date
     df["Edited date"] = df["Last edited"].dt.date
     df["year"] = df["Created time"].dt.year
 
-    def build_analysis(sub_df):
+    def build_analysis(sub_df, cutoff):
         created = sub_df.groupby("Created date").size().rename("created")
         closed = sub_df[sub_df["Status"].str.lower().isin(["done", "abandoned"])]
         closed = closed.groupby("Edited date").size().rename("closed")
         analysis = pd.concat([created, closed], axis=1).fillna(0).astype(int)
         analysis.index.name = "date"
         analysis = analysis.reset_index().sort_values("date")
+        analysis["date"] = pd.to_datetime(analysis["date"])
+        if cutoff is not None:
+            analysis = analysis[analysis["date"] >= cutoff]
         analysis["net"] = analysis["created"] - analysis["closed"]
         analysis["cumulative"] = analysis["net"].cumsum()
         return analysis
 
     fig = go.Figure()
-    total = build_analysis(df)
+    total = build_analysis(df, start_ts)
     fig.add_trace(go.Bar(x=total["date"], y=total["net"], name="Net Change"))
     fig.add_trace(go.Scatter(x=total["date"], y=total["cumulative"], mode="lines", name="Cumulative"))
 
     years = sorted(df["year"].dropna().unique())
     for year in years:
         year_df = df[df["year"] == year]
-        analysis = build_analysis(year_df)
+        analysis = build_analysis(year_df, start_ts)
         fig.add_trace(go.Bar(x=analysis["date"], y=analysis["net"], name="Net Change",
                              visible=False))
         fig.add_trace(go.Scatter(x=analysis["date"], y=analysis["cumulative"], mode="lines",
