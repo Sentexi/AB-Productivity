@@ -28,6 +28,7 @@ from src.report import (
     interactive_ttc_histogram,
     interactive_monthly_task_flow,
     interactive_weekly_time_minutes,
+    interactive_weekly_task_flow_counts,
     interactive_workspace_piecharts,
     interactive_waterfall,
 )
@@ -155,6 +156,15 @@ def interactive_time_minutes():
     fig = interactive_weekly_time_minutes(df_global)
     div = _fig_to_div(fig)
     return render_template('interactive/time_minutes.html', plot_div=div)
+
+
+@app.route('/interactive/taskflow-weekly')
+def interactive_taskflow_weekly():
+    if df_global is None:
+        _load_data()
+    fig = interactive_weekly_task_flow_counts(df_global)
+    div = _fig_to_div(fig)
+    return render_template('interactive/taskflow_weekly.html', plot_div=div)
 
 
 @app.route('/interactive/workspace')
