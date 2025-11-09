@@ -64,6 +64,10 @@ TIME_RANGE_OPTIONS = {
 DEFAULT_TIME_RANGE = "last-7-days"
 
 
+# Maximum history rendered in dashboard sparkline Plotly charts.
+SPARKLINE_MAX_POINTS = 52
+
+
 def _ensure_today_folder() -> None:
     """Fetch data from Notion if today's folder is missing."""
     today = datetime.now().strftime('%d_%b_%Y')
@@ -346,7 +350,7 @@ def dashboard():
             if prev_period is not None
             else None
         )
-        spark_tail = counts_sorted.tail(8)
+        spark_tail = counts_sorted.tail(SPARKLINE_MAX_POINTS)
         spark_div = _sparkline_div(
             spark_tail['label'],
             spark_tail['tasks_done'] - spark_tail['tasks_created'],
@@ -375,7 +379,7 @@ def dashboard():
     # Time Investment
     if not minutes.empty:
         minutes_sorted = minutes.sort_values('period_start')
-        spark_time = minutes_sorted.tail(8)
+        spark_time = minutes_sorted.tail(SPARKLINE_MAX_POINTS)
         spark_div = _sparkline_div(
             spark_time['label'],
             spark_time['actual_minutes'],
@@ -528,7 +532,7 @@ def dashboard():
                 )
                 share_series = ((top_weekly / weekly_totals).dropna() * 100).sort_index()
                 if not share_series.empty:
-                    tail = share_series.tail(8)
+                    tail = share_series.tail(SPARKLINE_MAX_POINTS)
                     spark_div = _sparkline_div(
                         tail.index.strftime('%Y-%m-%d'),
                         tail.values,
