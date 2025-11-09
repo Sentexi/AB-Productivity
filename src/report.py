@@ -791,7 +791,9 @@ def interactive_monthly_task_flow(analysis_df):
     return fig
 
 
-def prepare_daily_time_minutes(df):
+def prepare_daily_time_minutes(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
     """Return a dataframe with daily estimated vs actual minutes."""
 
     data = df.copy()
@@ -835,6 +837,46 @@ def prepare_daily_time_minutes(df):
 
     daily = pd.concat([daily_estimated, daily_actual], axis=1).fillna(0)
     daily = daily.sort_index()
+    daily.index = pd.to_datetime(daily.index)
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if daily.empty:
+        range_start = start_ts
+        range_end = end_ts if end_ts is not None else start_ts
+        if range_start is None and range_end is None:
+            return pd.DataFrame(
+                columns=["date", "estimated_minutes", "actual_minutes", "label"]
+            )
+    else:
+        range_start = start_ts if start_ts is not None else daily.index.min()
+        if range_start is None:
+            range_start = daily.index.min()
+        range_end = end_ts if end_ts is not None else daily.index.max()
+        if range_end is None:
+            range_end = daily.index.max()
+
+    if range_start is None and range_end is None:
+        return pd.DataFrame(
+            columns=["date", "estimated_minutes", "actual_minutes", "label"]
+        )
+
+    if range_start is None:
+        range_start = range_end
+    if range_end is None:
+        range_end = range_start
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="D")
+
+    if daily.empty:
+        daily = pd.DataFrame(index=full_range, columns=["estimated_minutes", "actual_minutes"])
+        daily = daily.fillna(0)
+    else:
+        daily = daily.reindex(full_range, fill_value=0)
+
     daily.index.name = "date"
     daily = daily.reset_index()
     if not daily.empty:
@@ -846,7 +888,9 @@ def prepare_daily_time_minutes(df):
     return daily
 
 
-def prepare_weekly_time_minutes(df):
+def prepare_weekly_time_minutes(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
     """Return a dataframe with weekly estimated vs actual minutes."""
 
     data = df.copy()
@@ -891,6 +935,63 @@ def prepare_weekly_time_minutes(df):
     weekly = pd.concat([weekly_estimated, weekly_actual], axis=1).fillna(0)
     weekly.index = weekly.index.to_timestamp()
     weekly = weekly.sort_index()
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if start_ts is not None:
+        start_ts = start_ts - pd.Timedelta(days=start_ts.weekday())
+    if end_ts is not None:
+        end_ts = end_ts - pd.Timedelta(days=end_ts.weekday())
+
+    if weekly.empty:
+        range_start = start_ts
+        range_end = end_ts if end_ts is not None else start_ts
+        if range_start is None and range_end is None:
+            return pd.DataFrame(
+                columns=[
+                    "week_start",
+                    "estimated_minutes",
+                    "actual_minutes",
+                    "label",
+                    "year",
+                ]
+            )
+    else:
+        range_start = start_ts if start_ts is not None else weekly.index.min()
+        if range_start is None:
+            range_start = weekly.index.min()
+        range_end = end_ts if end_ts is not None else weekly.index.max()
+        if range_end is None:
+            range_end = weekly.index.max()
+
+    if range_start is None and range_end is None:
+        return pd.DataFrame(
+            columns=[
+                "week_start",
+                "estimated_minutes",
+                "actual_minutes",
+                "label",
+                "year",
+            ]
+        )
+
+    if range_start is None:
+        range_start = range_end
+    if range_end is None:
+        range_end = range_start
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="W-MON")
+
+    if weekly.empty:
+        weekly = pd.DataFrame(
+            index=full_range, columns=["estimated_minutes", "actual_minutes"]
+        ).fillna(0)
+    else:
+        weekly = weekly.reindex(full_range, fill_value=0)
+
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
     if not weekly.empty:
@@ -978,44 +1079,111 @@ def prepare_workspace_minutes(
 
 
 def interactive_workspace_minutes(
-    df: pd.DataFrame, start_date: Optional[pd.Timestamp] = None
+    df: pd.DataFrame,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
 ):
-    """Return a stacked bar chart summarising minutes per workspace."""
+    """Return a stacked time series of actual minutes per workspace."""
 
-    aggregated = prepare_workspace_minutes(df, start_date=start_date)
+    data = df.copy()
+    data["Workspace"] = (
+        data.get("Workspace", pd.Series(index=data.index, dtype="object"))
+        .fillna("Unspecified")
+        .replace("", "Unspecified")
+    )
 
-    fig = go.Figure()
-    if aggregated.empty:
+    data["Last edited"] = pd.to_datetime(data.get("Last edited"), errors="coerce")
+    statuses = data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    data["status_normalized"] = statuses.str.lower()
+
+    actual = (
+        data[data["status_normalized"] == "done"]
+        .dropna(subset=["Last edited"])
+        .copy()
+    )
+    actual["actual_minutes"] = pd.to_numeric(
+        actual.get("Actual time (min)"), errors="coerce"
+    ).fillna(0)
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+    if start_ts is not None:
+        actual = actual[actual["Last edited"] >= start_ts]
+    if end_ts is not None:
+        actual = actual[actual["Last edited"] <= end_ts]
+
+    if actual.empty:
+        fig = go.Figure()
         fig.update_layout(
-            title="Workspace Minutes", xaxis_title="Workspace", yaxis_title="Minutes"
+            title="Workspace Focus (Actual Minutes)",
+            xaxis_title="Date",
+            yaxis_title="Actual Minutes",
+            barmode="stack",
+            legend_title="Workspace",
         )
         return fig
 
-    fig.add_trace(
-        go.Bar(
-            x=aggregated["Workspace"],
-            y=aggregated["estimated_minutes"],
-            name="Estimated Minutes",
-            marker_color="#f28b82",
-            hovertemplate="Workspace: %{x}<br>Estimated: %{y:,} min<extra></extra>",
+    actual["date"] = actual["Last edited"].dt.floor("D")
+    timeseries = (
+        actual.pivot_table(
+            index="date", columns="Workspace", values="actual_minutes", aggfunc="sum"
         )
-    )
-    fig.add_trace(
-        go.Bar(
-            x=aggregated["Workspace"],
-            y=aggregated["actual_minutes"],
-            name="Actual Minutes",
-            marker_color="#34a853",
-            hovertemplate="Workspace: %{x}<br>Actual: %{y:,} min<extra></extra>",
-        )
+        .fillna(0)
+        .sort_index()
     )
 
+    range_start = start_ts if start_ts is not None else timeseries.index.min()
+    range_end = end_ts if end_ts is not None else timeseries.index.max()
+    if range_start is None:
+        range_start = timeseries.index.min()
+    if range_end is None:
+        range_end = timeseries.index.max()
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="D")
+    timeseries = timeseries.reindex(full_range, fill_value=0)
+
+    column_totals = timeseries.sum(axis=0)
+    column_order = column_totals.sort_values(ascending=False)
+    column_order = column_order[column_order > 0]
+    if column_order.empty:
+        column_order = column_totals.sort_index()
+
+    fig = go.Figure()
+    for workspace in column_order.index:
+        fig.add_trace(
+            go.Bar(
+                x=timeseries.index,
+                y=timeseries[workspace],
+                name=str(workspace),
+                hovertemplate=(
+                    f"Date: %{{x|%Y-%m-%d}}<br>Workspace: {workspace}"
+                    f"<br>Actual: %{{y:,}} min<extra></extra>"
+                ),
+            )
+        )
+
+    remaining = [col for col in timeseries.columns if col not in column_order.index]
+    for workspace in remaining:
+        fig.add_trace(
+            go.Bar(
+                x=timeseries.index,
+                y=timeseries[workspace],
+                name=str(workspace),
+                hovertemplate=(
+                    f"Date: %{{x|%Y-%m-%d}}<br>Workspace: {workspace}"
+                    f"<br>Actual: %{{y:,}} min<extra></extra>"
+                ),
+            )
+        )
+
     fig.update_layout(
-        title="Workspace Minutes",
-        xaxis_title="Workspace",
-        yaxis_title="Minutes",
+        title="Workspace Focus (Actual Minutes)",
+        xaxis_title="Date",
+        yaxis_title="Actual Minutes",
         barmode="stack",
-        legend_title="Time Type",
+        legend_title="Workspace",
     )
 
     return fig
@@ -1052,13 +1220,23 @@ def _filter_weekly_with_overlap(
     return filtered
 
 
-def interactive_weekly_time_minutes(df, start_date: Optional[pd.Timestamp] = None):
+def interactive_weekly_time_minutes(
+    df,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+):
     """Return a Plotly figure summing estimated/actual minutes per week."""
 
-    weekly = prepare_weekly_time_minutes(df)
+    weekly = prepare_weekly_time_minutes(
+        df, start_date=start_date, end_date=end_date
+    )
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
         weekly = _filter_weekly_with_overlap(weekly, start_ts)
+
+    end_ts = _normalize_start_date(end_date)
+    if end_ts is not None and not weekly.empty:
+        weekly = weekly[weekly["week_start"] <= end_ts]
 
     fig = go.Figure()
     fig.add_trace(
@@ -1150,7 +1328,7 @@ def interactive_daily_time_minutes(
 ):
     """Return a Plotly figure summing estimated/actual minutes per day."""
 
-    daily = prepare_daily_time_minutes(df)
+    daily = prepare_daily_time_minutes(df, start_date=start_date, end_date=end_date)
     start_ts = _normalize_start_date(start_date)
     end_ts = _normalize_start_date(end_date)
 
@@ -1187,7 +1365,9 @@ def interactive_daily_time_minutes(
     return fig
 
 
-def prepare_daily_time_backlog(df):
+def prepare_daily_time_backlog(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
     """Return a dataframe with daily backlog minutes and cumulative totals."""
 
     data = df.copy()
@@ -1214,33 +1394,87 @@ def prepare_daily_time_backlog(df):
     data["status_normalized"] = statuses.str.lower()
 
     created = data.dropna(subset=["Created time"]).copy()
-    created["date"] = created["Created time"].dt.date
+    created["date"] = created["Created time"].dt.floor("D")
     daily_incoming = (
         created.groupby("date")["estimated_minutes"].sum().rename("incoming_minutes")
     )
 
     done = data[data["status_normalized"] == "done"].dropna(subset=["Last edited"]).copy()
-    done["date"] = done["Last edited"].dt.date
+    done["date"] = done["Last edited"].dt.floor("D")
     daily_completed = (
         done.groupby("date")["actual_minutes"].sum().rename("completed_minutes")
     )
 
     daily = pd.concat([daily_incoming, daily_completed], axis=1).fillna(0)
     daily.index = pd.to_datetime(daily.index)
-    daily = daily.sort_index().reset_index().rename(columns={"index": "date"})
+    daily = daily.sort_index()
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if not daily.empty:
+        range_start = daily.index.min()
+        range_end = daily.index.max()
+        if start_ts is not None:
+            range_start = min(range_start, start_ts)
+        if end_ts is not None:
+            range_end = max(range_end, end_ts)
+    else:
+        range_start = start_ts
+        range_end = end_ts if end_ts is not None else start_ts
+
+    if range_start is None and range_end is None:
+        return pd.DataFrame(
+            columns=[
+                "date",
+                "incoming_minutes",
+                "completed_minutes",
+                "net_change",
+                "cumulative_backlog",
+            ]
+        )
+
+    if range_start is None:
+        range_start = range_end
+    if range_end is None:
+        range_end = range_start
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="D")
+
+    if daily.empty:
+        daily = pd.DataFrame(
+            index=full_range, columns=["incoming_minutes", "completed_minutes"]
+        ).fillna(0)
+    else:
+        daily = daily.reindex(full_range, fill_value=0)
+
+    daily.index.name = "date"
+    daily = daily.reset_index()
     daily["net_change"] = daily["incoming_minutes"] - daily["completed_minutes"]
     daily["cumulative_backlog"] = daily["net_change"].cumsum()
 
     return daily
 
 
-def interactive_daily_time_backlog(df, start_date: Optional[pd.Timestamp] = None):
+def interactive_daily_time_backlog(
+    df,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+):
     """Return a Plotly figure showing daily backlog changes and cumulative minutes."""
 
-    daily = prepare_daily_time_backlog(df)
+    daily = prepare_daily_time_backlog(
+        df, start_date=start_date, end_date=end_date
+    )
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not daily.empty:
         daily = daily[daily["date"] >= start_ts]
+
+    end_ts = _normalize_start_date(end_date)
+    if end_ts is not None and not daily.empty:
+        daily = daily[daily["date"] <= end_ts]
 
     colors = ["red" if val > 0 else "green" for val in daily["net_change"]]
 
@@ -1274,7 +1508,9 @@ def interactive_daily_time_backlog(df, start_date: Optional[pd.Timestamp] = None
     return fig
 
 
-def prepare_daily_task_flow_counts(df):
+def prepare_daily_task_flow_counts(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
     """Return a dataframe with daily created vs done task counts."""
 
     data = df.copy()
@@ -1293,6 +1529,46 @@ def prepare_daily_task_flow_counts(df):
 
     daily = pd.concat([daily_created, daily_done], axis=1).fillna(0)
     daily = daily.sort_index()
+    daily.index = pd.to_datetime(daily.index)
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if daily.empty:
+        range_start = start_ts
+        range_end = end_ts if end_ts is not None else start_ts
+        if range_start is None and range_end is None:
+            return pd.DataFrame(
+                columns=["date", "tasks_created", "tasks_done", "label"]
+            )
+    else:
+        range_start = start_ts if start_ts is not None else daily.index.min()
+        if range_start is None:
+            range_start = daily.index.min()
+        range_end = end_ts if end_ts is not None else daily.index.max()
+        if range_end is None:
+            range_end = daily.index.max()
+
+    if range_start is None and range_end is None:
+        return pd.DataFrame(
+            columns=["date", "tasks_created", "tasks_done", "label"]
+        )
+
+    if range_start is None:
+        range_start = range_end
+    if range_end is None:
+        range_end = range_start
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="D")
+
+    if daily.empty:
+        daily = pd.DataFrame(index=full_range, columns=["tasks_created", "tasks_done"])
+        daily = daily.fillna(0)
+    else:
+        daily = daily.reindex(full_range, fill_value=0)
+
     daily.index.name = "date"
     daily = daily.reset_index()
     if not daily.empty:
@@ -1304,7 +1580,9 @@ def prepare_daily_task_flow_counts(df):
     return daily
 
 
-def prepare_weekly_task_flow_counts(df):
+def prepare_weekly_task_flow_counts(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
     """Return a dataframe with weekly created vs done task counts."""
 
     data = df.copy()
@@ -1324,6 +1602,62 @@ def prepare_weekly_task_flow_counts(df):
     weekly = pd.concat([weekly_created, weekly_done], axis=1).fillna(0)
     weekly.index = weekly.index.to_timestamp()
     weekly = weekly.sort_index()
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if start_ts is not None:
+        start_ts = start_ts - pd.Timedelta(days=start_ts.weekday())
+    if end_ts is not None:
+        end_ts = end_ts - pd.Timedelta(days=end_ts.weekday())
+
+    if weekly.empty:
+        range_start = start_ts
+        range_end = end_ts if end_ts is not None else start_ts
+        if range_start is None and range_end is None:
+            return pd.DataFrame(
+                columns=[
+                    "week_start",
+                    "tasks_created",
+                    "tasks_done",
+                    "label",
+                    "year",
+                ]
+            )
+    else:
+        range_start = start_ts if start_ts is not None else weekly.index.min()
+        if range_start is None:
+            range_start = weekly.index.min()
+        range_end = end_ts if end_ts is not None else weekly.index.max()
+        if range_end is None:
+            range_end = weekly.index.max()
+
+    if range_start is None and range_end is None:
+        return pd.DataFrame(
+            columns=[
+                "week_start",
+                "tasks_created",
+                "tasks_done",
+                "label",
+                "year",
+            ]
+        )
+
+    if range_start is None:
+        range_start = range_end
+    if range_end is None:
+        range_end = range_start
+    if range_start > range_end:
+        range_start, range_end = range_end, range_start
+
+    full_range = pd.date_range(range_start, range_end, freq="W-MON")
+
+    if weekly.empty:
+        weekly = pd.DataFrame(index=full_range, columns=["tasks_created", "tasks_done"])
+        weekly = weekly.fillna(0)
+    else:
+        weekly = weekly.reindex(full_range, fill_value=0)
+
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
     if not weekly.empty:
@@ -1338,13 +1672,23 @@ def prepare_weekly_task_flow_counts(df):
     return weekly
 
 
-def interactive_weekly_task_flow_counts(df, start_date: Optional[pd.Timestamp] = None):
+def interactive_weekly_task_flow_counts(
+    df,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+):
     """Return a Plotly figure with weekly task counts and year selector."""
 
-    weekly = prepare_weekly_task_flow_counts(df)
+    weekly = prepare_weekly_task_flow_counts(
+        df, start_date=start_date, end_date=end_date
+    )
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
         weekly = _filter_weekly_with_overlap(weekly, start_ts)
+
+    end_ts = _normalize_start_date(end_date)
+    if end_ts is not None and not weekly.empty:
+        weekly = weekly[weekly["week_start"] <= end_ts]
 
     fig = go.Figure()
     fig.add_trace(
@@ -1436,7 +1780,9 @@ def interactive_daily_task_flow_counts(
 ):
     """Return a Plotly figure with daily task counts."""
 
-    daily = prepare_daily_task_flow_counts(df)
+    daily = prepare_daily_task_flow_counts(
+        df, start_date=start_date, end_date=end_date
+    )
     start_ts = _normalize_start_date(start_date)
     end_ts = _normalize_start_date(end_date)
 

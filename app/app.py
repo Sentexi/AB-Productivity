@@ -280,27 +280,35 @@ def dashboard():
 
     if use_daily:
         minutes = _trim_timeframe(
-            prepare_daily_time_minutes(df_filtered),
+            prepare_daily_time_minutes(
+                df_filtered, start_date=start_date, end_date=range_end
+            ),
             'date',
             start_date,
             range_end,
         ).rename(columns={'date': 'period_start'})
         counts = _trim_timeframe(
-            prepare_daily_task_flow_counts(df_filtered),
+            prepare_daily_task_flow_counts(
+                df_filtered, start_date=start_date, end_date=range_end
+            ),
             'date',
             start_date,
             range_end,
         ).rename(columns={'date': 'period_start'})
     else:
         minutes = _trim_timeframe(
-            prepare_weekly_time_minutes(df_filtered),
+            prepare_weekly_time_minutes(
+                df_filtered, start_date=start_date, end_date=range_end
+            ),
             'week_start',
             start_date,
             range_end,
             grace=pd.Timedelta(days=6),
         ).rename(columns={'week_start': 'period_start'})
         counts = _trim_timeframe(
-            prepare_weekly_task_flow_counts(df_filtered),
+            prepare_weekly_task_flow_counts(
+                df_filtered, start_date=start_date, end_date=range_end
+            ),
             'week_start',
             start_date,
             range_end,
@@ -312,7 +320,9 @@ def dashboard():
             dataset['period_start'] = pd.to_datetime(dataset['period_start'])
 
     daily_backlog = _trim_timeframe(
-        prepare_daily_time_backlog(df_filtered),
+        prepare_daily_time_backlog(
+            df_global, start_date=start_date, end_date=range_end
+        ),
         'date',
         start_date,
         range_end,
@@ -595,7 +605,7 @@ def dashboard():
         )
     else:
         weekly_counts_fig = interactive_weekly_task_flow_counts(
-            df_filtered, start_date=start_date
+            df_filtered, start_date=start_date, end_date=range_end
         )
     weekly_counts_div = _fig_to_div(weekly_counts_fig)
 
@@ -605,18 +615,20 @@ def dashboard():
         )
     else:
         weekly_minutes_fig = interactive_weekly_time_minutes(
-            df_filtered, start_date=start_date
+            df_filtered, start_date=start_date, end_date=range_end
         )
     weekly_minutes_div = _fig_to_div(weekly_minutes_fig)
 
-    backlog_fig = interactive_daily_time_backlog(df_filtered, start_date=start_date)
+    backlog_fig = interactive_daily_time_backlog(
+        df_global, start_date=start_date, end_date=range_end
+    )
     backlog_div = _fig_to_div(backlog_fig)
 
     ttc_fig = interactive_ttc_histogram(df_filtered, start_date=start_date)
     ttc_div = _fig_to_div(ttc_fig)
 
     workspace_fig = interactive_workspace_minutes(
-        df_filtered, start_date=start_date
+        df_filtered, start_date=start_date, end_date=range_end
     )
     workspace_div = _fig_to_div(workspace_fig)
 
