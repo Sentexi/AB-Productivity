@@ -32,13 +32,14 @@ from src.report import (
     interactive_monthly_task_flow,
     interactive_weekly_time_minutes,
     interactive_weekly_task_flow_counts,
-    interactive_workspace_piecharts,
+    interactive_workspace_minutes,
     interactive_daily_time_backlog,
     interactive_waterfall,
     prepare_weekly_time_minutes,
     prepare_daily_time_backlog,
     prepare_weekly_task_flow_counts,
     prepare_ttc_statistics,
+    prepare_workspace_minutes,
 )
 app = Flask(__name__, static_folder="static", template_folder="templates")
 
@@ -372,50 +373,93 @@ def dashboard():
 
     # Workspace Focus (align with selected window)
     if not df_filtered.empty:
-        df_workspace = df_filtered.copy()
-        df_workspace['Created time'] = _as_naive(df_workspace['Created time'])
-        cutoff_date = pd.Timestamp.today().normalize() - pd.Timedelta(days=30)
-        if start_date is not None:
-            cutoff_date = max(cutoff_date, start_date)
-        recent_workspace = df_workspace[df_workspace['Created time'] >= cutoff_date]
-        if recent_workspace.empty:
-            recent_workspace = df_workspace
-        workspace_counts = (
-            recent_workspace.groupby('Workspace').size().sort_values(ascending=False)
+        workspace_minutes = prepare_workspace_minutes(
+            df_filtered, start_date=start_date
         )
-        if not workspace_counts.empty:
-            top_workspace_raw = workspace_counts.index[0]
+        if not workspace_minutes.empty:
+            top_row = workspace_minutes.iloc[0]
+            top_workspace_raw = top_row.get('Workspace')
             top_workspace = (
                 str(top_workspace_raw)
                 if pd.notna(top_workspace_raw)
                 else 'Unspecified'
             )
-            total_recent = workspace_counts.sum()
-            share = workspace_counts.iloc[0] / total_recent * 100 if total_recent else 0
+            total_actual = workspace_minutes['actual_minutes'].sum()
+            share = (
+                top_row['actual_minutes'] / total_actual * 100
+                if total_actual
+                else 0
+            )
+
             spark_div = None
-            if workspace_counts.shape[0] > 1:
-                share_series = (
-                    recent_workspace
-                    .set_index('Created time')
-                    .groupby(pd.Grouper(freq='W'))['Workspace']
-                    .apply(lambda x: (x == top_workspace).mean() * 100)
-                    .dropna()
+            df_workspace = df_filtered.copy()
+            df_workspace['Workspace'] = (
+                df_workspace.get('Workspace', pd.Series(index=df_workspace.index, dtype='object'))
+                .fillna('Unspecified')
+                .replace('', 'Unspecified')
+            )
+            df_workspace['Last edited'] = _as_naive(
+                df_workspace.get(
+                    'Last edited',
+                    pd.Series(index=df_workspace.index, dtype='datetime64[ns]')
                 )
+            )
+            actual_series = pd.to_numeric(
+                df_workspace.get('Actual time (min)', pd.Series(index=df_workspace.index, dtype=float)),
+                errors='coerce'
+            ).fillna(0)
+            df_workspace['Actual time (min)'] = actual_series
+            statuses = (
+                df_workspace.get('Status', pd.Series(index=df_workspace.index, dtype='object')).fillna('')
+            )
+            df_workspace['status_normalized'] = statuses.str.lower()
+            done = df_workspace[
+                (df_workspace['status_normalized'] == 'done')
+                & df_workspace['Last edited'].notna()
+            ].copy()
+            if start_date is not None:
+                done = done[done['Last edited'] >= start_date]
+            if not done.empty:
+                done['week'] = (
+                    done['Last edited']
+                    .dt.to_period('W-MON')
+                    .dt.start_time
+                )
+                weekly_actual = (
+                    done.groupby(['week', 'Workspace'])['Actual time (min)']
+                    .sum()
+                    .reset_index()
+                )
+                weekly_totals = (
+                    weekly_actual.groupby('week')['Actual time (min)']
+                    .sum()
+                )
+                top_weekly = (
+                    weekly_actual[weekly_actual['Workspace'] == top_workspace]
+                    .set_index('week')['Actual time (min)']
+                )
+                share_series = ((top_weekly / weekly_totals).dropna() * 100).sort_index()
                 if not share_series.empty:
+                    tail = share_series.tail(8)
                     spark_div = _sparkline_div(
-                        share_series.index.strftime('%Y-%m-%d'),
-                        share_series.values,
+                        tail.index.strftime('%Y-%m-%d'),
+                        tail.values,
                         color="#20c997",
                         yaxis_title="Share (%)",
                     )
+
+            variance = top_row['actual_minutes'] - top_row['estimated_minutes']
             kpi_cards.append(
                 {
                     'title': 'Workspace Focus',
                     'primary': f"{top_workspace}",
-                    'secondary': f"{share:.1f}% of {range_label.lower()}",
-                    'delta': {'text': '', 'is_positive': True},
+                    'secondary': (
+                        f"{_format_number(top_row['actual_minutes'], unit=' min actual')} "
+                        f"({share:.1f}% of window)"
+                    ),
+                    'delta': _format_delta(variance, unit=' min vs plan', invert=True),
                     'sparkline': spark_div,
-                    'footer': 'Share of tasks by workspace',
+                    'footer': 'Actual vs estimated minutes by workspace',
                     'range_summary': range_summary,
                 }
             )
@@ -469,7 +513,7 @@ def dashboard():
     ttc_fig = interactive_ttc_histogram(df_filtered, start_date=start_date)
     ttc_div = _fig_to_div(ttc_fig)
 
-    workspace_fig = interactive_workspace_piecharts(
+    workspace_fig = interactive_workspace_minutes(
         df_filtered, start_date=start_date
     )
     workspace_div = _fig_to_div(workspace_fig)
@@ -596,7 +640,7 @@ def interactive_taskflow_weekly():
 def interactive_workspace():
     if df_global is None:
         _load_data()
-    fig = interactive_workspace_piecharts(df_global)
+    fig = interactive_workspace_minutes(df_global)
     div = _fig_to_div(fig)
     return render_template('interactive/workspace.html', plot_div=div)
 

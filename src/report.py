@@ -844,6 +844,115 @@ def prepare_weekly_time_minutes(df):
     return weekly
 
 
+def prepare_workspace_minutes(
+    df: pd.DataFrame, start_date: Optional[pd.Timestamp] = None
+) -> pd.DataFrame:
+    """Aggregate estimated vs actual minutes per workspace."""
+
+    data = df.copy()
+    data["Workspace"] = (
+        data.get("Workspace", pd.Series(index=data.index, dtype="object"))
+        .fillna("Unspecified")
+        .replace("", "Unspecified")
+    )
+
+    data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    data["Last edited"] = pd.to_datetime(data["Last edited"], errors="coerce")
+
+    start_ts = _normalize_start_date(start_date)
+
+    if "Estimated Time (min)" in data.columns:
+        data["estimated_minutes"] = pd.to_numeric(
+            data["Estimated Time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["estimated_minutes"] = 0
+
+    if "Actual time (min)" in data.columns:
+        data["actual_minutes"] = pd.to_numeric(
+            data["Actual time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["actual_minutes"] = 0
+
+    estimated = data.dropna(subset=["Created time"]).copy()
+    if start_ts is not None:
+        estimated = estimated[estimated["Created time"] >= start_ts]
+    estimated_grouped = (
+        estimated.groupby("Workspace")["estimated_minutes"].sum().rename("estimated_minutes")
+    )
+
+    statuses = (
+        data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    )
+    data["status_normalized"] = statuses.str.lower()
+
+    actual = (
+        data[data["status_normalized"] == "done"]
+        .dropna(subset=["Last edited"])
+        .copy()
+    )
+    if start_ts is not None:
+        actual = actual[actual["Last edited"] >= start_ts]
+    actual_grouped = (
+        actual.groupby("Workspace")["actual_minutes"].sum().rename("actual_minutes")
+    )
+
+    combined = pd.concat([estimated_grouped, actual_grouped], axis=1).fillna(0)
+    combined.index.name = "Workspace"
+    combined = combined.reset_index()
+    combined = combined.sort_values("actual_minutes", ascending=False)
+    combined["total_minutes"] = (
+        combined["estimated_minutes"] + combined["actual_minutes"]
+    )
+
+    return combined
+
+
+def interactive_workspace_minutes(
+    df: pd.DataFrame, start_date: Optional[pd.Timestamp] = None
+):
+    """Return a stacked bar chart summarising minutes per workspace."""
+
+    aggregated = prepare_workspace_minutes(df, start_date=start_date)
+
+    fig = go.Figure()
+    if aggregated.empty:
+        fig.update_layout(
+            title="Workspace Minutes", xaxis_title="Workspace", yaxis_title="Minutes"
+        )
+        return fig
+
+    fig.add_trace(
+        go.Bar(
+            x=aggregated["Workspace"],
+            y=aggregated["estimated_minutes"],
+            name="Estimated Minutes",
+            marker_color="#f28b82",
+            hovertemplate="Workspace: %{x}<br>Estimated: %{y:,} min<extra></extra>",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=aggregated["Workspace"],
+            y=aggregated["actual_minutes"],
+            name="Actual Minutes",
+            marker_color="#34a853",
+            hovertemplate="Workspace: %{x}<br>Actual: %{y:,} min<extra></extra>",
+        )
+    )
+
+    fig.update_layout(
+        title="Workspace Minutes",
+        xaxis_title="Workspace",
+        yaxis_title="Minutes",
+        barmode="stack",
+        legend_title="Time Type",
+    )
+
+    return fig
+
+
 def _normalize_start_date(start_date: Optional[pd.Timestamp]) -> Optional[pd.Timestamp]:
     """Return a tz-naive pandas Timestamp for comparisons."""
 
