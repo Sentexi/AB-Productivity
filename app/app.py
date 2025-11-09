@@ -509,8 +509,14 @@ def _format_number(value, unit=""):
 def _format_delta(value, unit="", invert=False):
     if value is None:
         return {"text": "", "is_positive": False}
+    if isinstance(value, float) and value.is_integer():
+        value = int(value)
     sign = "" if value < 0 else "+"
-    text = f"{sign}{value:,.1f}{unit}" if isinstance(value, float) else f"{sign}{int(value)}{unit}"
+    text = (
+        f"{sign}{value:,.1f}{unit}"
+        if isinstance(value, float)
+        else f"{sign}{int(value)}{unit}"
+    )
     is_positive = value >= 0
     if invert:
         is_positive = not is_positive

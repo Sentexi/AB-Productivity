@@ -838,6 +838,12 @@ def prepare_weekly_time_minutes(df):
     weekly = weekly.sort_index()
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
+    if not weekly.empty:
+        weekly[["estimated_minutes", "actual_minutes"]] = (
+            weekly[["estimated_minutes", "actual_minutes"]]
+            .round()
+            .astype(int)
+        )
     weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
     weekly["year"] = weekly["week_start"].dt.year
 
@@ -1058,6 +1064,12 @@ def prepare_weekly_task_flow_counts(df):
     weekly = weekly.sort_index()
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
+    if not weekly.empty:
+        weekly[["tasks_created", "tasks_done"]] = (
+            weekly[["tasks_created", "tasks_done"]]
+            .round()
+            .astype(int)
+        )
     weekly["label"] = weekly["week_start"].dt.strftime("%Y-%m-%d")
     weekly["year"] = weekly["week_start"].dt.year
 
