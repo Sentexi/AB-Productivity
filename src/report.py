@@ -791,6 +791,61 @@ def interactive_monthly_task_flow(analysis_df):
     return fig
 
 
+def prepare_daily_time_minutes(df):
+    """Return a dataframe with daily estimated vs actual minutes."""
+
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
+    data["Last edited"] = pd.to_datetime(data["Last edited"], errors="coerce")
+
+    if "Estimated Time (min)" in data.columns:
+        data["estimated_minutes"] = pd.to_numeric(
+            data["Estimated Time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["estimated_minutes"] = 0
+
+    if "Actual time (min)" in data.columns:
+        data["actual_minutes"] = pd.to_numeric(
+            data["Actual time (min)"], errors="coerce"
+        ).fillna(0)
+    else:
+        data["actual_minutes"] = 0
+
+    created = data.dropna(subset=["Created time"]).copy()
+    created["date"] = created["Created time"].dt.floor("D")
+    daily_estimated = created.groupby("date")["estimated_minutes"].sum().rename(
+        "estimated_minutes"
+    )
+
+    statuses = (
+        data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    )
+    data["status_normalized"] = statuses.str.lower()
+
+    done = (
+        data[data["status_normalized"] == "done"]
+        .dropna(subset=["Last edited"])
+        .copy()
+    )
+    done["date"] = done["Last edited"].dt.floor("D")
+    daily_actual = done.groupby("date")["actual_minutes"].sum().rename(
+        "actual_minutes"
+    )
+
+    daily = pd.concat([daily_estimated, daily_actual], axis=1).fillna(0)
+    daily = daily.sort_index()
+    daily.index.name = "date"
+    daily = daily.reset_index()
+    if not daily.empty:
+        daily[["estimated_minutes", "actual_minutes"]] = (
+            daily[["estimated_minutes", "actual_minutes"]].round().astype(int)
+        )
+    daily["label"] = pd.to_datetime(daily["date"]).dt.strftime("%Y-%m-%d")
+
+    return daily
+
+
 def prepare_weekly_time_minutes(df):
     """Return a dataframe with weekly estimated vs actual minutes."""
 
@@ -851,7 +906,9 @@ def prepare_weekly_time_minutes(df):
 
 
 def prepare_workspace_minutes(
-    df: pd.DataFrame, start_date: Optional[pd.Timestamp] = None
+    df: pd.DataFrame,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
     """Aggregate estimated vs actual minutes per workspace."""
 
@@ -866,6 +923,7 @@ def prepare_workspace_minutes(
     data["Last edited"] = pd.to_datetime(data["Last edited"], errors="coerce")
 
     start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
 
     if "Estimated Time (min)" in data.columns:
         data["estimated_minutes"] = pd.to_numeric(
@@ -884,6 +942,8 @@ def prepare_workspace_minutes(
     estimated = data.dropna(subset=["Created time"]).copy()
     if start_ts is not None:
         estimated = estimated[estimated["Created time"] >= start_ts]
+    if end_ts is not None:
+        estimated = estimated[estimated["Created time"] <= end_ts]
     estimated_grouped = (
         estimated.groupby("Workspace")["estimated_minutes"].sum().rename("estimated_minutes")
     )
@@ -900,6 +960,8 @@ def prepare_workspace_minutes(
     )
     if start_ts is not None:
         actual = actual[actual["Last edited"] >= start_ts]
+    if end_ts is not None:
+        actual = actual[actual["Last edited"] <= end_ts]
     actual_grouped = (
         actual.groupby("Workspace")["actual_minutes"].sum().rename("actual_minutes")
     )
@@ -1083,6 +1145,48 @@ def interactive_weekly_time_minutes(df, start_date: Optional[pd.Timestamp] = Non
     return fig
 
 
+def interactive_daily_time_minutes(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
+    """Return a Plotly figure summing estimated/actual minutes per day."""
+
+    daily = prepare_daily_time_minutes(df)
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if start_ts is not None and not daily.empty:
+        daily = daily[daily["date"] >= start_ts]
+    if end_ts is not None and not daily.empty:
+        daily = daily[daily["date"] <= end_ts]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=daily["label"],
+            y=-daily["estimated_minutes"],
+            name="Estimated Minutes (Created)",
+            marker_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=daily["label"],
+            y=daily["actual_minutes"],
+            name="Actual Minutes (Done)",
+            marker_color="green",
+        )
+    )
+
+    fig.update_layout(
+        title="Daily Task Time (Minutes)",
+        xaxis_title="Date",
+        yaxis_title="Minutes",
+        barmode="relative",
+    )
+
+    return fig
+
+
 def prepare_daily_time_backlog(df):
     """Return a dataframe with daily backlog minutes and cumulative totals."""
 
@@ -1168,6 +1272,36 @@ def interactive_daily_time_backlog(df, start_date: Optional[pd.Timestamp] = None
     )
 
     return fig
+
+
+def prepare_daily_task_flow_counts(df):
+    """Return a dataframe with daily created vs done task counts."""
+
+    data = df.copy()
+    data["Created time"] = pd.to_datetime(data.get("Created time"), errors="coerce")
+    data["Last edited"] = pd.to_datetime(data.get("Last edited"), errors="coerce")
+    statuses = data.get("Status", pd.Series(index=data.index, dtype="object")).fillna("")
+    data["status_normalized"] = statuses.str.lower()
+
+    created = data.dropna(subset=["Created time"]).copy()
+    created["date"] = created["Created time"].dt.floor("D")
+    daily_created = created.groupby("date").size().rename("tasks_created")
+
+    done = data[data["status_normalized"] == "done"].dropna(subset=["Last edited"]).copy()
+    done["date"] = done["Last edited"].dt.floor("D")
+    daily_done = done.groupby("date").size().rename("tasks_done")
+
+    daily = pd.concat([daily_created, daily_done], axis=1).fillna(0)
+    daily = daily.sort_index()
+    daily.index.name = "date"
+    daily = daily.reset_index()
+    if not daily.empty:
+        daily[["tasks_created", "tasks_done"]] = (
+            daily[["tasks_created", "tasks_done"]].round().astype(int)
+        )
+    daily["label"] = pd.to_datetime(daily["date"]).dt.strftime("%Y-%m-%d")
+
+    return daily
 
 
 def prepare_weekly_task_flow_counts(df):
@@ -1294,6 +1428,48 @@ def interactive_weekly_task_flow_counts(df, start_date: Optional[pd.Timestamp] =
         barmode="relative",
         updatemenus=[dict(buttons=buttons, direction="down")],
     )
+    return fig
+
+
+def interactive_daily_task_flow_counts(
+    df, start_date: Optional[pd.Timestamp] = None, end_date: Optional[pd.Timestamp] = None
+):
+    """Return a Plotly figure with daily task counts."""
+
+    daily = prepare_daily_task_flow_counts(df)
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if start_ts is not None and not daily.empty:
+        daily = daily[daily["date"] >= start_ts]
+    if end_ts is not None and not daily.empty:
+        daily = daily[daily["date"] <= end_ts]
+
+    fig = go.Figure()
+    fig.add_trace(
+        go.Bar(
+            x=daily["label"],
+            y=-daily["tasks_created"],
+            name="Tasks Created",
+            marker_color="red",
+        )
+    )
+    fig.add_trace(
+        go.Bar(
+            x=daily["label"],
+            y=daily["tasks_done"],
+            name="Tasks Done",
+            marker_color="green",
+        )
+    )
+
+    fig.update_layout(
+        title="Daily Task Flow (Counts)",
+        xaxis_title="Date",
+        yaxis_title="Number of Tasks",
+        barmode="relative",
+    )
+
     return fig
 
 

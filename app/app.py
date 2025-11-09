@@ -30,13 +30,17 @@ from src.report import (
     plot_liberal_stuff_done_heatmaps,
     interactive_ttc_histogram,
     interactive_monthly_task_flow,
+    interactive_daily_time_minutes,
+    interactive_daily_task_flow_counts,
     interactive_weekly_time_minutes,
     interactive_weekly_task_flow_counts,
     interactive_workspace_minutes,
     interactive_daily_time_backlog,
     interactive_waterfall,
+    prepare_daily_time_minutes,
     prepare_weekly_time_minutes,
     prepare_daily_time_backlog,
+    prepare_daily_task_flow_counts,
     prepare_weekly_task_flow_counts,
     prepare_ttc_statistics,
     prepare_workspace_minutes,
@@ -51,11 +55,13 @@ df_global = None
 analysis_global = None
 
 TIME_RANGE_OPTIONS = {
-    "last-4-weeks": "Last 4 weeks",
+    "last-7-days": "Last 7 Days",
+    "this-week": "This Week",
+    "last-4-weeks": "Last 4 Weeks",
     "quarter-to-date": "Quarter to Date",
     "year-to-date": "Year to Date",
 }
-DEFAULT_TIME_RANGE = "last-4-weeks"
+DEFAULT_TIME_RANGE = "last-7-days"
 
 
 def _ensure_today_folder() -> None:
@@ -118,6 +124,13 @@ def _get_timeframe_bounds(range_key: str) -> Tuple[Optional[pd.Timestamp], pd.Ti
     """Return the (start, end) bounds for the selected dashboard range."""
 
     today = pd.Timestamp.today().normalize()
+    if range_key == "last-7-days":
+        start = today - pd.Timedelta(days=6)
+        return start, today
+    if range_key == "this-week":
+        start = today - pd.Timedelta(days=today.weekday())
+        end = start + pd.Timedelta(days=6)
+        return start, end
     if range_key == "last-4-weeks":
         return today - pd.Timedelta(weeks=4), today
     if range_key == "quarter-to-date":
@@ -139,23 +152,35 @@ def _as_naive(series: pd.Series) -> pd.Series:
 
 
 def _filter_dataframe_for_timeframe(
-    df: pd.DataFrame, start_date: Optional[pd.Timestamp]
+    df: pd.DataFrame,
+    start_date: Optional[pd.Timestamp],
+    end_date: Optional[pd.Timestamp] = None,
 ) -> pd.DataFrame:
-    if start_date is None or df.empty:
+    if (start_date is None and end_date is None) or df.empty:
         return df
 
     data = df.copy()
-    mask = pd.Series(False, index=data.index)
+    mask = pd.Series(False, index=data.index, dtype=bool)
 
     if "Created time" in data.columns:
         created = _as_naive(data["Created time"])
         data["Created time"] = created
-        mask = mask | (created >= start_date)
+        mask_created = created.notna()
+        if start_date is not None:
+            mask_created &= created >= start_date
+        if end_date is not None:
+            mask_created &= created <= end_date
+        mask = mask | mask_created
 
     if "Last edited" in data.columns:
         edited = _as_naive(data["Last edited"])
         data["Last edited"] = edited
-        mask = mask | (edited >= start_date)
+        mask_edited = edited.notna()
+        if start_date is not None:
+            mask_edited &= edited >= start_date
+        if end_date is not None:
+            mask_edited &= edited <= end_date
+        mask = mask | mask_edited
 
     return data.loc[mask].copy()
 
@@ -164,10 +189,11 @@ def _trim_timeframe(
     df: pd.DataFrame,
     column: str,
     start_date: Optional[pd.Timestamp],
+    end_date: Optional[pd.Timestamp] = None,
     *,
     grace: Optional[pd.Timedelta] = None,
 ) -> pd.DataFrame:
-    if start_date is None or df.empty or column not in df.columns:
+    if (start_date is None and end_date is None) or df.empty or column not in df.columns:
         return df
 
     values = _as_naive(df[column])
@@ -175,8 +201,15 @@ def _trim_timeframe(
     if grace is not None:
         comparison = comparison + grace
 
-    mask = comparison >= start_date
+    mask = pd.Series(True, index=df.index, dtype=bool)
+    if start_date is not None:
+        mask &= comparison >= start_date
+    if end_date is not None:
+        mask &= values <= end_date
+
     trimmed = df.loc[mask].copy()
+    if column in trimmed.columns:
+        trimmed[column] = values.loc[trimmed.index]
     return trimmed
 
 
@@ -233,86 +266,124 @@ def dashboard():
     if selected_range not in TIME_RANGE_OPTIONS:
         selected_range = DEFAULT_TIME_RANGE
 
-    start_date, default_end = _get_timeframe_bounds(selected_range)
-    df_filtered = _filter_dataframe_for_timeframe(df_global.copy(), start_date)
+    start_date, range_end = _get_timeframe_bounds(selected_range)
+    df_filtered = _filter_dataframe_for_timeframe(
+        df_global.copy(), start_date, range_end
+    )
 
-    weekly_minutes = _trim_timeframe(
-        prepare_weekly_time_minutes(df_filtered),
-        'week_start',
-        start_date,
-        grace=pd.Timedelta(days=6),
-    )
-    weekly_counts = _trim_timeframe(
-        prepare_weekly_task_flow_counts(df_filtered),
-        'week_start',
-        start_date,
-        grace=pd.Timedelta(days=6),
-    )
+    use_daily = selected_range in {"last-7-days", "this-week"}
+    period_type = "day" if use_daily else "week"
+
+    if use_daily:
+        minutes = _trim_timeframe(
+            prepare_daily_time_minutes(df_filtered),
+            'date',
+            start_date,
+            range_end,
+        ).rename(columns={'date': 'period_start'})
+        counts = _trim_timeframe(
+            prepare_daily_task_flow_counts(df_filtered),
+            'date',
+            start_date,
+            range_end,
+        ).rename(columns={'date': 'period_start'})
+    else:
+        minutes = _trim_timeframe(
+            prepare_weekly_time_minutes(df_filtered),
+            'week_start',
+            start_date,
+            range_end,
+            grace=pd.Timedelta(days=6),
+        ).rename(columns={'week_start': 'period_start'})
+        counts = _trim_timeframe(
+            prepare_weekly_task_flow_counts(df_filtered),
+            'week_start',
+            start_date,
+            range_end,
+            grace=pd.Timedelta(days=6),
+        ).rename(columns={'week_start': 'period_start'})
+
+    for dataset in (minutes, counts):
+        if not dataset.empty and 'period_start' in dataset.columns:
+            dataset['period_start'] = pd.to_datetime(dataset['period_start'])
+
     daily_backlog = _trim_timeframe(
-        prepare_daily_time_backlog(df_filtered), 'date', start_date
+        prepare_daily_time_backlog(df_filtered),
+        'date',
+        start_date,
+        range_end,
     )
     ttc_stats, ttc_done = prepare_ttc_statistics(df_filtered)
 
-    if start_date is not None and not ttc_done.empty:
+    if not ttc_done.empty:
         last_edited = _as_naive(ttc_done['Last edited'])
-        mask = last_edited >= start_date
+        mask = pd.Series(True, index=ttc_done.index)
+        if start_date is not None:
+            mask &= last_edited >= start_date
+        if range_end is not None:
+            mask &= last_edited <= range_end
         ttc_done = ttc_done.loc[mask].copy()
         ttc_done['Last edited'] = last_edited.loc[mask]
 
     latest_activity = _latest_activity_date(df_filtered)
-    end_date = latest_activity or default_end
+    end_date = latest_activity or range_end
     range_label = TIME_RANGE_OPTIONS[selected_range]
     range_summary = (
         f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
-        if start_date is not None
+        if start_date is not None and end_date is not None
         else "All available data"
     )
 
     kpi_cards = []
 
-    # Weekly Throughput
-    if not weekly_counts.empty:
-        weekly_counts_sorted = weekly_counts.sort_values('week_start')
-        latest_week = weekly_counts_sorted.iloc[-1]
-        prev_week = weekly_counts_sorted.iloc[-2] if len(weekly_counts_sorted) > 1 else None
+    throughput_title = "Daily Throughput" if use_daily else "Weekly Throughput"
+    if not counts.empty:
+        counts_sorted = counts.sort_values('period_start')
+        latest_period = counts_sorted.iloc[-1]
+        prev_period = counts_sorted.iloc[-2] if len(counts_sorted) > 1 else None
         delta_done = (
-            latest_week['tasks_done'] - prev_week['tasks_done']
-            if prev_week is not None
+            latest_period['tasks_done'] - prev_period['tasks_done']
+            if prev_period is not None
             else None
         )
-        spark_weeks = weekly_counts_sorted.tail(8)
+        spark_tail = counts_sorted.tail(8)
         spark_div = _sparkline_div(
-            spark_weeks['label'],
-            spark_weeks['tasks_done'] - spark_weeks['tasks_created'],
+            spark_tail['label'],
+            spark_tail['tasks_done'] - spark_tail['tasks_created'],
             color="#198754",
             yaxis_title="Net tasks",
         )
-        total_done = weekly_counts_sorted['tasks_done'].sum()
-        total_created = weekly_counts_sorted['tasks_created'].sum()
+        total_done = counts_sorted['tasks_done'].sum()
+        total_created = counts_sorted['tasks_created'].sum()
+        footer_text = _format_period_footer(
+            latest_period['period_start'],
+            latest_period['label'],
+            period_type,
+        )
         kpi_cards.append(
             {
-                'title': 'Weekly Throughput',
+                'title': throughput_title,
                 'primary': f"{_format_number(total_done)} done",
                 'secondary': f"{_format_number(total_created)} created",
                 'delta': _format_delta(delta_done, unit=" vs prior"),
                 'sparkline': spark_div,
-                'footer': f"Week of {latest_week['label']}",
+                'footer': footer_text,
                 'range_summary': range_summary,
             }
         )
 
     # Time Investment
-    if not weekly_minutes.empty:
-        weekly_minutes_sorted = weekly_minutes.sort_values('week_start')
-        spark_time = weekly_minutes_sorted.tail(8)
+    if not minutes.empty:
+        minutes_sorted = minutes.sort_values('period_start')
+        spark_time = minutes_sorted.tail(8)
         spark_div = _sparkline_div(
             spark_time['label'],
             spark_time['actual_minutes'],
             color="#0d6efd",
             yaxis_title="Minutes",
         )
-        total_actual = weekly_minutes_sorted['actual_minutes'].sum()
-        total_estimated = weekly_minutes_sorted['estimated_minutes'].sum()
+        total_actual = minutes_sorted['actual_minutes'].sum()
+        total_estimated = minutes_sorted['estimated_minutes'].sum()
         delta = _format_delta(total_actual - total_estimated, unit=" min", invert=True)
         kpi_cards.append(
             {
@@ -389,7 +460,7 @@ def dashboard():
     # Workspace Focus (align with selected window)
     if not df_filtered.empty:
         workspace_minutes = prepare_workspace_minutes(
-            df_filtered, start_date=start_date
+            df_filtered, start_date=start_date, end_date=range_end
         )
         if not workspace_minutes.empty:
             top_row = workspace_minutes.iloc[0]
@@ -434,6 +505,8 @@ def dashboard():
             ].copy()
             if start_date is not None:
                 done = done[done['Last edited'] >= start_date]
+            if range_end is not None:
+                done = done[done['Last edited'] <= range_end]
             if not done.empty:
                 done['week'] = (
                     done['Last edited']
@@ -512,14 +585,24 @@ def dashboard():
         )
 
     # Trend charts for dashboard sections
-    weekly_counts_fig = interactive_weekly_task_flow_counts(
-        df_filtered, start_date=start_date
-    )
+    if use_daily:
+        weekly_counts_fig = interactive_daily_task_flow_counts(
+            df_filtered, start_date=start_date, end_date=range_end
+        )
+    else:
+        weekly_counts_fig = interactive_weekly_task_flow_counts(
+            df_filtered, start_date=start_date
+        )
     weekly_counts_div = _fig_to_div(weekly_counts_fig)
 
-    weekly_minutes_fig = interactive_weekly_time_minutes(
-        df_filtered, start_date=start_date
-    )
+    if use_daily:
+        weekly_minutes_fig = interactive_daily_time_minutes(
+            df_filtered, start_date=start_date, end_date=range_end
+        )
+    else:
+        weekly_minutes_fig = interactive_weekly_time_minutes(
+            df_filtered, start_date=start_date
+        )
     weekly_minutes_div = _fig_to_div(weekly_minutes_fig)
 
     backlog_fig = interactive_daily_time_backlog(df_filtered, start_date=start_date)
@@ -580,6 +663,15 @@ def _format_delta(value, unit="", invert=False):
     if invert:
         is_positive = not is_positive
     return {"text": text, "is_positive": is_positive}
+
+
+def _format_period_footer(period_start, label, period_type):
+    if pd.isna(period_start):
+        return ""
+    timestamp = pd.to_datetime(period_start)
+    if period_type == "day":
+        return f"Day of {timestamp:%b %d, %Y}"
+    return f"Week of {label}"
 
 
 def _sparkline_div(x_values, y_values, color="#0d6efd", yaxis_title="Value"):
