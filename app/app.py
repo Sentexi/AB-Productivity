@@ -269,38 +269,44 @@ def dashboard():
             spark_weeks['label'],
             spark_weeks['tasks_done'] - spark_weeks['tasks_created'],
             color="#198754",
+            yaxis_title="Net tasks",
         )
+        total_done = weekly_counts_sorted['tasks_done'].sum()
+        total_created = weekly_counts_sorted['tasks_created'].sum()
         kpi_cards.append(
             {
                 'title': 'Weekly Throughput',
-                'primary': f"{int(latest_week['tasks_done'])} done",
-                'secondary': f"{int(latest_week['tasks_created'])} created",
+                'primary': f"{_format_number(total_done)} done",
+                'secondary': f"{_format_number(total_created)} created",
                 'delta': _format_delta(delta_done, unit=" vs prior"),
                 'sparkline': spark_div,
                 'footer': f"Week of {latest_week['label']}",
+                'range_summary': range_summary,
             }
         )
 
     # Time Investment
     if not weekly_minutes.empty:
         weekly_minutes_sorted = weekly_minutes.sort_values('week_start')
-        latest_time = weekly_minutes_sorted.iloc[-1]
-        variance = latest_time['actual_minutes'] - latest_time['estimated_minutes']
         spark_time = weekly_minutes_sorted.tail(8)
         spark_div = _sparkline_div(
             spark_time['label'],
             spark_time['actual_minutes'],
             color="#0d6efd",
+            yaxis_title="Minutes",
         )
-        delta = _format_delta(variance, unit=" min", invert=True)
+        total_actual = weekly_minutes_sorted['actual_minutes'].sum()
+        total_estimated = weekly_minutes_sorted['estimated_minutes'].sum()
+        delta = _format_delta(total_actual - total_estimated, unit=" min", invert=True)
         kpi_cards.append(
             {
                 'title': 'Time Investment',
-                'primary': f"{int(latest_time['actual_minutes']):,} min actual",
-                'secondary': f"{int(latest_time['estimated_minutes']):,} min planned",
+                'primary': f"{_format_number(total_actual)} min actual",
+                'secondary': f"{_format_number(total_estimated)} min planned",
                 'delta': delta,
                 'sparkline': spark_div,
                 'footer': 'Variance vs plan (lower is better)',
+                'range_summary': range_summary,
             }
         )
 
@@ -319,6 +325,7 @@ def dashboard():
             spark_daily['date'],
             spark_daily['cumulative_backlog'],
             color="#6610f2",
+            yaxis_title="Minutes",
         )
         kpi_cards.append(
             {
@@ -328,6 +335,7 @@ def dashboard():
                 'delta': _format_delta(delta_backlog, unit=' min', invert=True),
                 'sparkline': spark_div,
                 'footer': f"Updated {latest_day['date']:%b %d, %Y}",
+                'range_summary': range_summary,
             }
         )
 
@@ -348,6 +356,7 @@ def dashboard():
             recent_series['Last edited'],
             recent_series['TTC'],
             color="#fd7e14",
+            yaxis_title="Days",
         )
         kpi_cards.append(
             {
@@ -357,6 +366,7 @@ def dashboard():
                 'delta': _format_delta(delta_value, unit=' days', invert=True),
                 'sparkline': spark_div,
                 'footer': f"{stats.get('recent_count', 0)} tasks completed in window",
+                'range_summary': range_summary,
             }
         )
 
@@ -396,6 +406,7 @@ def dashboard():
                         share_series.index.strftime('%Y-%m-%d'),
                         share_series.values,
                         color="#20c997",
+                        yaxis_title="Share (%)",
                     )
             kpi_cards.append(
                 {
@@ -405,6 +416,7 @@ def dashboard():
                     'delta': {'text': '', 'is_positive': True},
                     'sparkline': spark_div,
                     'footer': 'Share of tasks by workspace',
+                    'range_summary': range_summary,
                 }
             )
 
@@ -422,6 +434,7 @@ def dashboard():
             daily_backlog.tail(14)['date'],
             daily_backlog.tail(14)['net_change'],
             color="#dc3545",
+            yaxis_title="Minutes",
         )
         kpi_cards.append(
             {
@@ -435,6 +448,7 @@ def dashboard():
                 ),
                 'sparkline': spark_div,
                 'footer': 'Recent daily net changes',
+                'range_summary': range_summary,
             }
         )
 
@@ -503,25 +517,36 @@ def _format_delta(value, unit="", invert=False):
     return {"text": text, "is_positive": is_positive}
 
 
-def _sparkline_div(x_values, y_values, color="#0d6efd"):
+def _sparkline_div(x_values, y_values, color="#0d6efd", yaxis_title="Value"):
     if len(x_values) == 0:
         return None
+
+    y_series = pd.Series(list(y_values))
+    decimals = "0f"
+    if not y_series.dropna().empty:
+        if not (y_series.dropna() == y_series.dropna().round()).all():
+            decimals = "1f"
+
     fig = go.Figure()
     fig.add_trace(
         go.Scatter(
             x=x_values,
-            y=y_values,
-            mode="lines",
+            y=y_series,
+            mode="lines+markers",
             line=dict(color=color, width=2),
-            hoverinfo="skip",
+            marker=dict(size=6, color=color),
+            hovertemplate=f"%{{x}}<br>%{{y:{decimals}}}<extra></extra>",
         )
     )
     fig.update_layout(
-        margin=dict(l=0, r=0, t=0, b=0),
-        xaxis=dict(visible=False),
-        yaxis=dict(visible=False),
-        height=120,
+        template="simple_white",
+        margin=dict(l=40, r=10, t=20, b=40),
+        height=200,
+        showlegend=False,
     )
+    fig.update_xaxes(title_text="", showgrid=False, showline=True, zeroline=False)
+    fig.update_yaxes(title_text=yaxis_title, showgrid=True, zeroline=True, showline=True)
+
     return _fig_to_div(fig)
 
 
