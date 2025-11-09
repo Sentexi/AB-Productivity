@@ -145,19 +145,26 @@ def _filter_dataframe_for_timeframe(
         return df
 
     data = df.copy()
-    mask = pd.Series(False, index=data.index)
+    created = (
+        _as_naive(data["Created time"])
+        if "Created time" in data.columns
+        else pd.Series(pd.NaT, index=data.index)
+    )
+    edited = (
+        _as_naive(data["Last edited"])
+        if "Last edited" in data.columns
+        else pd.Series(pd.NaT, index=data.index)
+    )
 
-    if "Created time" in data.columns:
-        created = _as_naive(data["Created time"])
-        data["Created time"] = created
-        mask = mask | (created >= start_date)
+    data["Created time"] = created
+    data["Last edited"] = edited
 
-    if "Last edited" in data.columns:
-        edited = _as_naive(data["Last edited"])
-        data["Last edited"] = edited
-        mask = mask | (edited >= start_date)
+    created_before = created.notna() & (created < start_date)
+    edited_before = edited.notna() & (edited < start_date)
 
-    return data.loc[mask].copy()
+    drop_mask = created_before & edited_before
+
+    return data.loc[~drop_mask].copy()
 
 
 def _trim_timeframe(
@@ -236,14 +243,25 @@ def dashboard():
     start_date, default_end = _get_timeframe_bounds(selected_range)
     df_filtered = _filter_dataframe_for_timeframe(df_global.copy(), start_date)
 
+    latest_activity = _latest_activity_date(df_filtered)
+    end_date = latest_activity or default_end
+
     weekly_minutes = _trim_timeframe(
-        prepare_weekly_time_minutes(df_filtered),
+        prepare_weekly_time_minutes(
+            df_filtered,
+            start_date=start_date,
+            end_date=end_date,
+        ),
         'week_start',
         start_date,
         grace=pd.Timedelta(days=6),
     )
     weekly_counts = _trim_timeframe(
-        prepare_weekly_task_flow_counts(df_filtered),
+        prepare_weekly_task_flow_counts(
+            df_filtered,
+            start_date=start_date,
+            end_date=end_date,
+        ),
         'week_start',
         start_date,
         grace=pd.Timedelta(days=6),
@@ -259,8 +277,6 @@ def dashboard():
         ttc_done = ttc_done.loc[mask].copy()
         ttc_done['Last edited'] = last_edited.loc[mask]
 
-    latest_activity = _latest_activity_date(df_filtered)
-    end_date = latest_activity or default_end
     range_label = TIME_RANGE_OPTIONS[selected_range]
     range_summary = (
         f"{start_date.strftime('%b %d, %Y')} – {end_date.strftime('%b %d, %Y')}"
