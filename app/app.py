@@ -411,7 +411,9 @@ def dashboard():
     # Flow Streak
     if not daily_backlog.empty:
         streak = 0
-        for change in reversed(daily_backlog.sort_values('date')['net_change']):
+        for change in reversed(
+            daily_backlog.sort_values('date')['net_change'].tolist()
+        ):
             if change <= 0:
                 streak += 1
             else:
