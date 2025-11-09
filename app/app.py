@@ -161,13 +161,22 @@ def _filter_dataframe_for_timeframe(
 
 
 def _trim_timeframe(
-    df: pd.DataFrame, column: str, start_date: Optional[pd.Timestamp]
+    df: pd.DataFrame,
+    column: str,
+    start_date: Optional[pd.Timestamp],
+    *,
+    grace: Optional[pd.Timedelta] = None,
 ) -> pd.DataFrame:
     if start_date is None or df.empty or column not in df.columns:
         return df
 
     values = _as_naive(df[column])
-    trimmed = df.loc[values >= start_date].copy()
+    comparison = values
+    if grace is not None:
+        comparison = comparison + grace
+
+    mask = comparison >= start_date
+    trimmed = df.loc[mask].copy()
     return trimmed
 
 
@@ -228,10 +237,16 @@ def dashboard():
     df_filtered = _filter_dataframe_for_timeframe(df_global.copy(), start_date)
 
     weekly_minutes = _trim_timeframe(
-        prepare_weekly_time_minutes(df_filtered), 'week_start', start_date
+        prepare_weekly_time_minutes(df_filtered),
+        'week_start',
+        start_date,
+        grace=pd.Timedelta(days=6),
     )
     weekly_counts = _trim_timeframe(
-        prepare_weekly_task_flow_counts(df_filtered), 'week_start', start_date
+        prepare_weekly_task_flow_counts(df_filtered),
+        'week_start',
+        start_date,
+        grace=pd.Timedelta(days=6),
     )
     daily_backlog = _trim_timeframe(
         prepare_daily_time_backlog(df_filtered), 'date', start_date
