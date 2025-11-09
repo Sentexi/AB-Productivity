@@ -791,8 +791,16 @@ def interactive_monthly_task_flow(analysis_df):
     return fig
 
 
-def prepare_weekly_time_minutes(df):
-    """Return a dataframe with weekly estimated vs actual minutes."""
+def prepare_weekly_time_minutes(
+    df,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+):
+    """Return a dataframe with weekly estimated vs actual minutes.
+
+    When timeframe bounds are provided, zero-fill inactive weeks within the
+    window so visualisations reflect quiet periods.
+    """
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data["Created time"], errors="coerce")
@@ -836,6 +844,26 @@ def prepare_weekly_time_minutes(df):
     weekly = pd.concat([weekly_estimated, weekly_actual], axis=1).fillna(0)
     weekly.index = weekly.index.to_timestamp()
     weekly = weekly.sort_index()
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if not weekly.empty:
+        if start_ts is None:
+            start_ts = weekly.index.min()
+        if end_ts is None:
+            end_ts = weekly.index.max()
+    elif start_ts is not None and end_ts is None:
+        end_ts = start_ts
+
+    if start_ts is not None and end_ts is not None and start_ts <= end_ts:
+        start_week = start_ts.to_period("W-MON").to_timestamp()
+        end_week = end_ts.to_period("W-MON").to_timestamp()
+        if start_week > end_week:
+            end_week = start_week
+        full_range = pd.date_range(start_week, end_week, freq="W-MON")
+        weekly = weekly.reindex(full_range, fill_value=0)
+
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
     if not weekly.empty:
@@ -993,7 +1021,7 @@ def _filter_weekly_with_overlap(
 def interactive_weekly_time_minutes(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure summing estimated/actual minutes per week."""
 
-    weekly = prepare_weekly_time_minutes(df)
+    weekly = prepare_weekly_time_minutes(df, start_date=start_date)
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
         weekly = _filter_weekly_with_overlap(weekly, start_ts)
@@ -1170,8 +1198,16 @@ def interactive_daily_time_backlog(df, start_date: Optional[pd.Timestamp] = None
     return fig
 
 
-def prepare_weekly_task_flow_counts(df):
-    """Return a dataframe with weekly created vs done task counts."""
+def prepare_weekly_task_flow_counts(
+    df,
+    start_date: Optional[pd.Timestamp] = None,
+    end_date: Optional[pd.Timestamp] = None,
+):
+    """Return a dataframe with weekly created vs done task counts.
+
+    When timeframe bounds are supplied, insert zero-value weeks to preserve the
+    full reporting window in downstream charts.
+    """
 
     data = df.copy()
     data["Created time"] = pd.to_datetime(data.get("Created time"), errors="coerce")
@@ -1190,6 +1226,26 @@ def prepare_weekly_task_flow_counts(df):
     weekly = pd.concat([weekly_created, weekly_done], axis=1).fillna(0)
     weekly.index = weekly.index.to_timestamp()
     weekly = weekly.sort_index()
+
+    start_ts = _normalize_start_date(start_date)
+    end_ts = _normalize_start_date(end_date)
+
+    if not weekly.empty:
+        if start_ts is None:
+            start_ts = weekly.index.min()
+        if end_ts is None:
+            end_ts = weekly.index.max()
+    elif start_ts is not None and end_ts is None:
+        end_ts = start_ts
+
+    if start_ts is not None and end_ts is not None and start_ts <= end_ts:
+        start_week = start_ts.to_period("W-MON").to_timestamp()
+        end_week = end_ts.to_period("W-MON").to_timestamp()
+        if start_week > end_week:
+            end_week = start_week
+        full_range = pd.date_range(start_week, end_week, freq="W-MON")
+        weekly = weekly.reindex(full_range, fill_value=0)
+
     weekly.index.name = "week_start"
     weekly = weekly.reset_index()
     if not weekly.empty:
@@ -1207,7 +1263,7 @@ def prepare_weekly_task_flow_counts(df):
 def interactive_weekly_task_flow_counts(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure with weekly task counts and year selector."""
 
-    weekly = prepare_weekly_task_flow_counts(df)
+    weekly = prepare_weekly_task_flow_counts(df, start_date=start_date)
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
         weekly = _filter_weekly_with_overlap(weekly, start_ts)
