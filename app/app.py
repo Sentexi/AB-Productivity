@@ -132,7 +132,7 @@ def _get_timeframe_bounds(range_key: str) -> Tuple[Optional[pd.Timestamp], pd.Ti
 
 def _as_naive(series: pd.Series) -> pd.Series:
     converted = pd.to_datetime(series, errors="coerce")
-    if pd.api.types.is_datetime64tz_dtype(converted.dtype):
+    if isinstance(converted.dtype, pd.DatetimeTZDtype):
         converted = converted.dt.tz_localize(None)
     return converted
 
