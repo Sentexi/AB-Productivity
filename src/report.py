@@ -856,13 +856,32 @@ def _normalize_start_date(start_date: Optional[pd.Timestamp]) -> Optional[pd.Tim
     return ts
 
 
+def _filter_weekly_with_overlap(
+    weekly: pd.DataFrame, start_ts: Optional[pd.Timestamp]
+) -> pd.DataFrame:
+    """Filter weekly aggregates so any overlapping week is retained."""
+
+    if start_ts is None or weekly.empty or "week_start" not in weekly.columns:
+        return weekly
+
+    week_starts = pd.to_datetime(weekly["week_start"], errors="coerce")
+    overlap = week_starts + pd.Timedelta(days=6)
+    mask = overlap >= start_ts
+    filtered = weekly.loc[mask].copy()
+    if filtered.empty:
+        return filtered
+
+    filtered["week_start"] = week_starts.loc[filtered.index]
+    return filtered
+
+
 def interactive_weekly_time_minutes(df, start_date: Optional[pd.Timestamp] = None):
     """Return a Plotly figure summing estimated/actual minutes per week."""
 
     weekly = prepare_weekly_time_minutes(df)
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
-        weekly = weekly[weekly["week_start"] >= start_ts]
+        weekly = _filter_weekly_with_overlap(weekly, start_ts)
 
     fig = go.Figure()
     fig.add_trace(
@@ -1070,7 +1089,7 @@ def interactive_weekly_task_flow_counts(df, start_date: Optional[pd.Timestamp] =
     weekly = prepare_weekly_task_flow_counts(df)
     start_ts = _normalize_start_date(start_date)
     if start_ts is not None and not weekly.empty:
-        weekly = weekly[weekly["week_start"] >= start_ts]
+        weekly = _filter_weekly_with_overlap(weekly, start_ts)
 
     fig = go.Figure()
     fig.add_trace(
