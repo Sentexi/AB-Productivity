@@ -38,6 +38,9 @@
           <div class="d-flex justify-content-between align-items-start mb-3">
             <div>
               <h2 class="h6 text-uppercase text-muted mb-1">{{ card.title }}</h2>
+              {% if card.range_summary %}
+              <div class="text-muted small mb-2">{{ card.range_summary }}</div>
+              {% endif %}
               <div class="fs-4 fw-semibold">{{ card.primary }}</div>
             </div>
             {% if card.delta and card.delta.text and card.delta.text != '' %}
@@ -46,7 +49,7 @@
           </div>
           <p class="text-muted small mb-2">{{ card.secondary }}</p>
           {% if card.sparkline %}
-          <div class="ratio" style="--bs-aspect-ratio:30%; min-height:120px;">
+          <div class="ratio" style="--bs-aspect-ratio:50%; min-height:200px;">
             {{ card.sparkline|safe }}
           </div>
           {% endif %}
